@@ -28,7 +28,17 @@ prepare() {
   # Use defconfig + EFI stub (U-Boot boots via EFI). Adjust if the fork
   # documents a davinci-specific fragment.
   make defconfig
-  ./scripts/config -e EFI_STUB -e EFI || true
+  ./scripts/config --enable EFI_STUB --enable EFI
+  # Davinci device fragment (display/storage/platform drivers the
+  # reference sm7150 ports enable over defconfig). scripts/config fails
+  # on unknown symbols, so this also validates the fragment.
+  while IFS= read -r line; do
+    case "$line" in
+      CONFIG_*=y) ./scripts/config --enable "${line%%=*}" ;;
+      CONFIG_*=m) ./scripts/config --module "${line%%=*}" ;;
+    esac
+  done < "$startdir/davinci.config"
+  make olddefconfig
 }
 
 build() {

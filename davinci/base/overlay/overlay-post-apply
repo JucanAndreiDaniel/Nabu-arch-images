@@ -31,6 +31,14 @@ grep -q 'davinci_nested' /etc/mkinitcpio.conf || {
   exit 1
 }
 
+# Pin modules autodetect would miss (it probes the CI build host, not the
+# phone). Idempotent: the empty-tuple pattern only matches once.
+sed -i 's/^MODULES=()$/MODULES=(goodix)/' /etc/mkinitcpio.conf
+grep -q '^MODULES=(goodix)$' /etc/mkinitcpio.conf || {
+  echo "ERROR: failed to set mkinitcpio MODULES" >&2
+  exit 1
+}
+
 sed -i '/^IgnorePkg/d' /etc/pacman.conf
 if grep -q '^#IgnorePkg' /etc/pacman.conf; then
     sed -i '/^#IgnorePkg/c\IgnorePkg = linux-davinci linux-davinci-headers' /etc/pacman.conf
