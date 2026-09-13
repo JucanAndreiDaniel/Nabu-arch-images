@@ -40,6 +40,43 @@ prepare() {
     esac
   done < "$startdir/davinci.config"
   make olddefconfig
+  # Verify the davinci-relevant effective config. Merge order is defconfig +
+  # sm7150.config + efi.config (merge_config.sh -m) with davinci.config
+  # applied last via scripts/config, so entries here must win (notably
+  # FB_EFI=y over efi.config's n, panel/backlight =m over sm7150.config's y).
+  # Fail the build on mismatch instead of shipping a blind image; the full
+  # table also lands in the CI log for post-mortems.
+  echo "--- davinci effective-config check ---"
+  _need_y() {
+    grep -q "^$1=y$" .config || { echo "ERROR: expected $1=y:"; grep "^$1[ =]\|# $1 " .config || echo "  (symbol missing)"; exit 1; }
+    echo "ok: $(grep "^$1=" .config)"
+  }
+  _need_m() {
+    grep -q "^$1=m$" .config || { echo "ERROR: expected $1=m:"; grep "^$1[ =]\|# $1 " .config || echo "  (symbol missing)"; exit 1; }
+    echo "ok: $(grep "^$1=" .config)"
+  }
+  _need_off() {
+    if grep -q "^$1=y$" .config || grep -q "^$1=m$" .config; then
+      echo "ERROR: expected $1 off:"; grep "^$1=" .config; exit 1
+    fi
+    echo "ok: $1 off"
+  }
+  for s in FB_SIMPLE FB_EFI DRM DRM_MSM DRM_BRIDGE DRM_MIPI_DSI DRM_PANEL_BRIDGE \
+      FRAMEBUFFER_CONSOLE SERIAL_MSM_CONSOLE \
+      USB_GADGET USB_LIBCOMPOSITE USB_F_ACM USB_F_SERIAL U_SERIAL_CONSOLE \
+      USB_CONFIGFS USB_CONFIGFS_SERIAL USB_CONFIGFS_ACM CONFIGFS_FS \
+      PSTORE PSTORE_CONSOLE PSTORE_RAM MAGIC_SYSRQ \
+      SCSI_UFS_QCOM SM_GCC_7150 SM_DISPCC_7150; do
+    _need_y "CONFIG_${s}"
+  done
+  for s in TOUCHSCREEN_GOODIX_GTX8 DRM_PANEL_SAMSUNG_AMS639RQ08 \
+      BACKLIGHT_PWM BACKLIGHT_QCOM_WLED; do
+    _need_m "CONFIG_${s}"
+  done
+  for s in SYSFB_SIMPLEFB DRM_SIMPLEDRM TOUCHSCREEN_GOODIX \
+      DRM_PANEL_VISIONOX_G1639FP106; do
+    _need_off "CONFIG_${s}"
+  done
 }
 
 build() {

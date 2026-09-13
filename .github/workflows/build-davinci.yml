@@ -294,7 +294,7 @@ jobs:
         run: |
           sudo cp ./repo/davinci/base/overlay/* -r ./mountpoint/
           sudo arch-chroot ./mountpoint bash - <<'EOF'
-          chmod +x /overlay-post-apply /usr/libexec/davinci/uki-regenerate
+          chmod +x /overlay-post-apply /usr/libexec/davinci/uki-regenerate /usr/libexec/davinci/combine-cmdline
           /overlay-post-apply
           rm /overlay-post-apply
           EOF
@@ -304,13 +304,16 @@ jobs:
           # The inner root has no PARTLABEL (plain offset loop), so fstab and
           # the UKI cmdline must use the UUIDs captured at format time.
           # Must run after the overlay copy (placeholders) and before mkinitcpio.
+          # combine-cmdline re-runs here because overlay-post-apply combined
+          # the placeholders; the UKIs bake the combined files, not root.conf.
           sudo sed -i "s/DAVINCI-ROOT-UUID/$ROOT_UUID/g; s/DAVINCI-ESP-UUID/$ESP_UUID/g" ./mountpoint/etc/fstab
           sudo sed -i "s/DAVINCI-ROOT-UUID/$ROOT_UUID/g" ./mountpoint/etc/cmdline.d/root.conf
+          sudo arch-chroot ./mountpoint /usr/libexec/davinci/combine-cmdline
           if sudo grep -rqE "DAVINCI-(ROOT|ESP)-UUID" ./mountpoint/etc/; then
             echo "ERROR: unfilled UUID placeholder left behind" >&2
             exit 1
           fi
-          sudo cat ./mountpoint/etc/fstab ./mountpoint/etc/cmdline.d/root.conf
+          sudo cat ./mountpoint/etc/fstab ./mountpoint/etc/cmdline.d/combined-default.conf ./mountpoint/etc/cmdline.d/combined-debug.conf
 
       - name: Install systemd-boot + generate UKI
         run: |
@@ -324,6 +327,7 @@ jobs:
           sed -i "s|HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)|HOOKS=(base udev autodetect modconf kms keyboard keymap consolefont block filesystems fsck)|g" /etc/mkinitcpio.conf || true
           mkinitcpio -P
           test -f /boot/EFI/Linux/arch-linux-davinci.efi
+          test -f /boot/EFI/Linux/arch-linux-davinci-debug.efi
           test -f /boot/EFI/BOOT/bootaa64.efi
           ls -l /boot/EFI/ /boot/EFI/Linux/ /boot/loader/entries/ || true
           EOF

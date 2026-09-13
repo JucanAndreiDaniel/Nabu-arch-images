@@ -5,15 +5,20 @@
 
 kernver=$(ls /usr/lib/modules/ | sort -V | tail -1)
 if [ -n "$kernver" ]; then
+  # mkinitcpio bakes ONE cmdline file per preset, not the whole
+  # /etc/cmdline.d directory (see combine-cmdline).
+  /usr/libexec/davinci/combine-cmdline
   cat > /etc/mkinitcpio.d/linux-davinci.preset << PRESET
 # mkinitcpio preset file for the 'linux-davinci' package
 
 ALL_kver="$kernver"
 
-PRESETS=('default')
+PRESETS=('default' 'debug')
 
 default_uki="/boot/EFI/Linux/arch-linux-davinci.efi"
-default_cmdline="/etc/cmdline.d/root.conf"
+default_cmdline="/etc/cmdline.d/combined-default.conf"
+debug_uki="/boot/EFI/Linux/arch-linux-davinci-debug.efi"
+debug_cmdline="/etc/cmdline.d/combined-debug.conf"
 PRESET
 
   sed -i "s|^DeviceTree=.*|DeviceTree=/boot/dtb-${kernver}|" /usr/lib/kernel/uki.conf
@@ -32,24 +37,31 @@ grep -q 'davinci_nested' /etc/mkinitcpio.conf || {
 }
 
 # Pin modules autodetect would miss (it probes the CI build host, not the
-# phone). Resolve names against the installed modules: the Goodix driver
-# builds as goodix_ts.ko, not goodix.ko. Touch is not needed to mount root,
-# so warn instead of failing when no candidate exists.
-touch_mods=()
-for m in goodix_ts goodix; do
-  if [ -n "$kernver" ] && find "/usr/lib/modules/${kernver}" -name "${m}.ko*" -print -quit 2>/dev/null | grep -q .; then
-    touch_mods+=("$m")
+# phone). pmOS model (device-xiaomi-davinci/modules-initfs + generic
+# device-qcom-sm7150/modules-initfs): panel + touch + backlight travel in the
+# initramfs as modules. Kernel filenames use dashes
+# (panel-samsung-ams639rq08.ko) while depmod aliases use underscores, so
+# match both spellings. Display/touch are not needed to mount root, so warn
+# instead of failing when a candidate is missing.
+want_mods=(gtx8 panel_samsung_ams639rq08 qcom_wled)
+found_mods=()
+for m in "${want_mods[@]}"; do
+  dash="${m//_/-}"
+  if [ -n "$kernver" ] && find "/usr/lib/modules/${kernver}" \( -name "${m}.ko*" -o -name "${dash}.ko*" \) -print -quit 2>/dev/null | grep -q .; then
+    found_mods+=("$m")
+  else
+    echo "WARNING: module ${m} not found in /usr/lib/modules/${kernver}; skipping" >&2
   fi
 done
-if [ "${#touch_mods[@]}" -gt 0 ]; then
+if [ "${#found_mods[@]}" -gt 0 ]; then
   # Idempotent: the empty-tuple pattern only matches once.
-  sed -i "s/^MODULES=()$/MODULES=(${touch_mods[*]})/" /etc/mkinitcpio.conf
-  grep -q "^MODULES=(${touch_mods[*]})$" /etc/mkinitcpio.conf || {
+  sed -i "s/^MODULES=()$/MODULES=(${found_mods[*]})/" /etc/mkinitcpio.conf
+  grep -q "^MODULES=(${found_mods[*]})$" /etc/mkinitcpio.conf || {
     echo "ERROR: failed to set mkinitcpio MODULES" >&2
     exit 1
   }
 else
-  echo "WARNING: no touchscreen module found in /usr/lib/modules/${kernver}; leaving MODULES empty" >&2
+  echo "WARNING: no davinci modules found in /usr/lib/modules/${kernver}; leaving MODULES empty" >&2
 fi
 
 sed -i '/^IgnorePkg/d' /etc/pacman.conf

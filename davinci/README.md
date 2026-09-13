@@ -91,6 +91,57 @@ fastboot reboot
 
 Default credentials: `user` / `123456` (same as nabu images).
 
+## Black-screen bring-up (debug)
+
+Selecting the UKI currently ends in a black screen with no logs. Two
+boot entries are installed to triangulate display-driver failure vs early
+panic:
+
+- `Arch Linux (davinci, Samsung)` — `arch-linux-davinci.efi`
+  (verbose bring-up cmdline: `root=UUID=… + console=ttyMSM0 + console=tty0`,
+  no `quiet` until first successful boot)
+- `Arch Linux (davinci, Samsung, debug)` — `arch-linux-davinci-debug.efi`
+  (adds `loglevel=7 ignore_loglevel earlycon efi=debug drm.debug=0x1e
+  initcall_debug davinci_debug`)
+
+`davinci_debug` makes the `davinci_nested` initramfs hook trace hosting
+partition lookup + offset-loop setup (`ls`, `blkid`) to serial/fbcon/pstore.
+
+Observability ladder (cheapest first):
+
+1. **Screen**: the debug entry prints `ignore_loglevel` + `drm.debug` to
+   fbcon (`console=tty0`). Text on screen = kernel alive, display handoff
+   works; black = panic before fbcon or MSM tearing down simplefb.
+2. **U-Boot menu**: hold Volume Down while U-Boot loads, or pick `Enable
+   serial console gadget` (`serial_gadget` in `qcom-phone.env`) for a
+   `usbacm` serial console on the host.
+3. **USB enumeration**: after picking an entry, `lsusb` on the host. A new
+   gadget/serial device = kernel past USB init; nothing at all = very early
+   hang (DTB/clock/power, not root mount).
+4. **ramoops**: DTS reserves `ramoops@9d800000` and the kernel has
+   `PSTORE_CONSOLE+PSTORE_RAM`; after a *warm* reboot into a working system
+   (e.g. pmOS, without cutting power) read `/sys/fs/pstore/console-ramoops-0`
+   for the previous boot's last dmesg.
+5. **UART**: `console=ttyMSM0,115200n8` is baked in (also in DT
+   `chosen.bootargs`); needs test-point access, last resort.
+
+pmOS cross-check (known-good reference, `generic` branch): pmOS ships
+`FB_SIMPLE=y` **and** `FB_EFI=y` with `# SYSFB_SIMPLEFB is not set` and
+`DRM_SIMPLEDRM` unset; panel (`AMS639RQ08`), touch (`GTX8`), backlight
+(`PWM`, `QCOM_WLED`) as **modules** in `modules-initfs` (`gtx8`,
+`panel_samsung_ams639rq08`); builtin USB gadget stack (`LIBCOMPOSITE`,
+`F_ACM/F_SERIAL`, `CONFIGFS`, `U_SERIAL_CONSOLE`); `MAGIC_SYSRQ=y`. This
+tree now matches that model — the previous `FB_EFI=n`, builtin panel, and
+`GOODIX` (wrong driver, davinci's gt9886 is `GTX8`) settings were divergences
+found by diffing `config-postmarketos-qcom-sm7150.aarch64`. The kernel
+`prepare()` asserts the effective `.config` for all of these and fails the
+build on mismatch (see CI log `davinci effective-config check`).
+
+Note: mkinitcpio presets bake **one** cmdline file per UKI, not the
+`/etc/cmdline.d` directory — `usr/libexec/davinci/combine-cmdline`
+concatenates the fragments. Re-run it after any fragment edit, then
+`mkinitcpio -P` (or `/usr/libexec/davinci/uki-regenerate`).
+
 ## Visionox panel
 
 Not supported in v1. Needs `u-boot-sm7150-xiaomi-davinci-visionox.img` plus

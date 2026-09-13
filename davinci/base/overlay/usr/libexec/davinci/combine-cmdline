@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Combine /etc/cmdline.d fragments into the single files baked into the UKIs.
+#
+# mkinitcpio presets take ONE default_cmdline file per preset, not a
+# directory: without this step only root.conf would reach the kernel and
+# console=... / debug flags would be silently dropped.
+#
+# Layout:
+#   combined-default.conf = root.conf + davinci.conf (verbose bring-up,
+#                           no quiet until first successful boot)
+#   combined-debug.conf   = root.conf + davinci.conf + debug.conf
+#                           (ignore_loglevel, drm.debug, davinci_debug hook)
+#
+# Re-run after ANY fragment edit (notably after CI fills the UUID
+# placeholders in root.conf): overlay-post-apply, uki-regenerate and the CI
+# Fill-UUIDs step all call this helper.
+set -euo pipefail
+
+cd /etc/cmdline.d
+
+for f in root.conf davinci.conf debug.conf; do
+  [ -f "$f" ] || { echo "combine-cmdline: missing $f" >&2; exit 1; }
+done
+
+# paste joins lines with spaces into one line (kernel cmdline must be one
+# line; raw cat would leave embedded newlines).
+paste -sd' ' root.conf davinci.conf > combined-default.conf
+paste -sd' ' root.conf davinci.conf debug.conf > combined-debug.conf
+
+echo "combine-cmdline: default: $(cat combined-default.conf)"
+echo "combine-cmdline: debug:   $(cat combined-debug.conf)"

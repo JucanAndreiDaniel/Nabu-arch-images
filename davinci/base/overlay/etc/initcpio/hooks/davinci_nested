@@ -15,6 +15,13 @@
 run_hook() {
     local host="" loop
 
+    # Debug UKI passes davinci_debug on the cmdline: trace every step so a
+    # black-screen boot still leaves evidence on serial/fbcon/pstore.
+    if grep -q 'davinci_debug' /proc/cmdline 2>/dev/null; then
+        echo "davinci_nested: DEBUG on, cmdline: $(cat /proc/cmdline)"
+        set -x
+    fi
+
     for part in linux userdata; do
         if poll_device "/dev/disk/by-partlabel/${part}" 10; then
             host="/dev/disk/by-partlabel/${part}"
@@ -23,6 +30,9 @@ run_hook() {
     done
     if [ -z "$host" ]; then
         echo "davinci_nested: no linux/userdata hosting partition found"
+        echo "davinci_nested: by-partlabel contents:"
+        ls -l /dev/disk/by-partlabel/ || true
+        if command -v blkid >/dev/null 2>&1; then blkid || true; fi
         return 1
     fi
     msg "davinci_nested: hosting partition $host"
@@ -34,4 +44,10 @@ run_hook() {
         return 1
     }
     msg "davinci_nested: root on $loop"
+    if grep -q 'davinci_debug' /proc/cmdline 2>/dev/null; then
+        ls -l "$loop" || true
+        if command -v blkid >/dev/null 2>&1; then blkid "$loop" || true; fi
+        set +x
+        echo "davinci_nested: DEBUG done, continuing to mount root"
+    fi
 }

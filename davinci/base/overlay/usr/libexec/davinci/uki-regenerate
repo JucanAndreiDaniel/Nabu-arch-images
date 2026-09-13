@@ -23,15 +23,20 @@ cat > /etc/mkinitcpio.d/linux-davinci.preset << PRESET
 ALL_config="/etc/mkinitcpio.conf"
 ALL_kver="/boot/vmlinuz-${kernver}"
 
-PRESETS=('default')
+PRESETS=('default' 'debug')
 
 default_uki="/boot/EFI/Linux/arch-linux-davinci.efi"
-default_cmdline="/etc/cmdline.d/root.conf"
+default_cmdline="/etc/cmdline.d/combined-default.conf"
+debug_uki="/boot/EFI/Linux/arch-linux-davinci-debug.efi"
+debug_cmdline="/etc/cmdline.d/combined-debug.conf"
 PRESET
 
 if [ -f /usr/lib/kernel/uki.conf ]; then
     sed -i "s|^DeviceTree=.*|DeviceTree=/boot/dtb-${kernver}|" /usr/lib/kernel/uki.conf
 fi
+
+# mkinitcpio bakes one cmdline file per preset (see combine-cmdline).
+/usr/libexec/davinci/combine-cmdline
 
 # /boot lives on the rootfs for davinci v1 (no separate ESP partition).
 mkdir -p /boot/EFI/Linux
