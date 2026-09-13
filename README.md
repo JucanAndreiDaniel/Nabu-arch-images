@@ -1,4 +1,8 @@
 # Arch Linux ARM Installer for Xiaomi Pad 5 (nabu)
+
+> Xiaomi Mi 9T / Redmi K20 (davinci, SM7150)? See [davinci/](davinci/) —
+> Samsung panel v1, prebuilt U-Boot + systemd-boot, `fastboot erase dtbo` required.
+> The nabu flow below (EDK2/rEFInd, `linux`/`esp` partitions) does not apply to davinci.
 ![Arch Linux Arm on the Xiaomi Pad 5 (nabu)](nabu_alarm.jpg)
 
 ---

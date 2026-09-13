@@ -1,0 +1,205 @@
+name: Build davinci
+
+on:
+  workflow_dispatch:
+    inputs:
+      trigger_release:
+        description: "Also create a GitHub release after build"
+        type: boolean
+        default: false
+      kernel_version:
+        description: "linux-davinci version to install (empty = latest in [davinci] repo)"
+        type: string
+        default: ""
+        required: false
+      davinci_repo:
+        description: "Pacman [davinci] repo base URL"
+        type: string
+        default: "https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo"
+        required: false
+
+jobs:
+  build-davinci-base:
+    name: Build davinci base image (Samsung)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Update apt cache
+        run: sudo apt-get update
+
+      - name: Install tools
+        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs pigz dosfstools
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          path: repo
+
+      - name: Verify pinned U-Boot
+        run: |
+          cd repo/davinci
+          chmod +x scripts/fetch-uboot.sh
+          mkdir -p images
+          ./scripts/fetch-uboot.sh ./images
+          ls -l images/
+
+      - name: Create and mount image
+        run: |
+          truncate -s 20G ./rootfs-davinci-samsung.img
+          mkfs.ext4 ./rootfs-davinci-samsung.img
+          mkdir mountpoint
+          sudo mount -o loop ./rootfs-davinci-samsung.img ./mountpoint/
+          sudo mkdir -p ./mountpoint/boot
+
+      - name: Download generic rootfs tarball
+        run: |
+          if ! wget --timeout=30 --tries=2 --waitretry=5 "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz; then
+            echo "Primary mirror failed, falling back to GitHub release"
+            wget --timeout=30 --tries=2 "https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz
+          fi
+
+      - name: Build rootfs-extractor image
+        run: |
+          echo '
+          FROM alpine:latest
+          RUN apk add --no-cache libarchive-tools
+          ENTRYPOINT ["/bin/sh"]
+          ' > Dockerfile
+          docker build -t rootfs-extractor .
+
+      - name: Extract rootfs
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/ArchLinuxARM-aarch64-latest.tar.gz:/rootfs.tar \
+            -v ${{ github.workspace }}/mountpoint:/mountpoint \
+            rootfs-extractor -c "
+              cd /mountpoint && bsdtar -xpf /rootfs.tar
+            "
+
+      - name: Init pacman key store
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          pacman-key --init
+          pacman-key --populate archlinuxarm
+          EOF
+
+      - name: Configure pacman
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          cat > /etc/pacman.d/mirrorlist <<'EOM'
+          Server = http://ca.us.mirror.archlinuxarm.org/$arch/$repo
+          Server = http://nj.us.mirror.archlinuxarm.org/$arch/$repo
+          EOM
+          sed -i "s/#ParallelDownloads/ParallelDownloads/g" /etc/pacman.conf
+          sed -i "s/#DisableSandboxFilesystem/DisableSandboxFilesystem/g" /etc/pacman.conf
+          sed -i "s/#DisableSandboxSyscalls/DisableSandboxSyscalls/g" /etc/pacman.conf
+          EOF
+
+      - name: Add davinci repo
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<EOF
+          printf '\n[davinci]\nSigLevel = Never\nServer = ${{ inputs.davinci_repo }}\n' >> /etc/pacman.conf
+          n=0
+          until pacman -Sy --noconfirm; do
+            n=\$((n+1))
+            if [ \$n -ge 3 ]; then exit 1; fi
+            sleep 5
+          done
+          EOF
+
+      - name: Delete default user, set locale
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          userdel alarm || true
+          sed -i "s|#en_US.UTF-8 UTF-8|en_US.UTF-8 UTF-8|g" "/etc/locale.gen"
+          locale-gen
+          echo "LANG=en_US.UTF-8" > "/etc/locale.conf"
+          EOF
+
+      - name: Remove generic kernel, update, install davinci stack
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          set -e
+          pacman -R --noconfirm linux-aarch64 || true
+          n=0
+          until pacman -Syu --noconfirm; do
+            n=$((n+1))
+            if [ $n -ge 3 ]; then exit 1; fi
+            sleep 5
+          done
+          # Fork kernel (Samsung DTB) + firmware + bootloader tooling.
+          # linux-firmware-xiaomi-davinci is expected in [davinci]; falla back
+          # to linux-firmware + manual blob step documented in davinci/README.md.
+          pacman -S --noconfirm ukify systemd systemd-boot
+          pacman -S --noconfirm linux-davinci linux-davinci-headers
+          pacman -S --noconfirm linux-firmware-xiaomi-davinci || pacman -S --noconfirm linux-firmware
+          pacman -S --noconfirm tqftpserv || true
+          pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator
+          systemctl enable bluetooth NetworkManager
+          systemctl enable systemd-zram-setup@zram0.service || true
+          systemctl disable sshd || true
+          echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
+          EOF
+
+      - name: Apply davinci overlay
+        run: |
+          sudo cp ./repo/davinci/base/overlay/* -r ./mountpoint/
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          chmod +x /overlay-post-apply /usr/libexec/davinci/uki-regenerate
+          /overlay-post-apply
+          rm /overlay-post-apply
+          EOF
+
+      - name: Install systemd-boot + generate UKI
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          set -e
+          # /boot lives on the rootfs (no separate ESP partition in v1).
+          bootctl install --esp-path=/boot || bootctl install
+          sed -i "s|HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)|HOOKS=(base udev autodetect modconf kms keyboard keymap consolefont block filesystems fsck)|g" /etc/mkinitcpio.conf || true
+          mkinitcpio -P
+          test -f /boot/EFI/Linux/arch-linux-davinci.efi
+          ls -l /boot/EFI/Linux/ /boot/loader/entries/ || true
+          EOF
+
+      - name: Create user, clean cache
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          useradd -m -G wheel,audio,video,storage,optical -s /bin/bash user
+          echo "user:123456" | chpasswd
+          yes | pacman -Scc || true
+          EOF
+
+      - name: Unmount, shrink, assemble artifacts
+        run: |
+          sudo umount -R ./mountpoint
+          rmdir ./mountpoint
+          e2fsck -f rootfs-davinci-samsung.img -y
+          resize2fs rootfs-davinci-samsung.img -M
+          mkdir -p ./images
+          mv ./rootfs-davinci-samsung.img ./images/
+          # Bring in the verified prebuilt U-Boot (already fetched above).
+          if [ ! -f ./images/boot-davinci-samsung.img ]; then
+            cp ./repo/davinci/images/boot-davinci-samsung.img ./images/ 2>/dev/null || \
+              (cd repo/davinci && ./scripts/fetch-uboot.sh ../../images)
+          fi
+          cp ./repo/davinci/flash-davinci-samsung.sh .
+          cp ./repo/davinci/flash-davinci-samsung.bat .
+          cp ./repo/davinci/README.md ./README-davinci.md
+          cp ./repo/davinci/uboot.env .
+          chmod +x flash-davinci-samsung.sh
+          ls -l ./images/
+          sha256sum ./images/* > ./images/SHA256SUMS
+          cat ./images/SHA256SUMS
+
+      - name: Upload davinci artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: arch-davinci-samsung
+          path: |
+            images
+            flash-davinci-samsung.sh
+            flash-davinci-samsung.bat
+            README-davinci.md
+            uboot.env
+          retention-days: 90
+          compression-level: 5

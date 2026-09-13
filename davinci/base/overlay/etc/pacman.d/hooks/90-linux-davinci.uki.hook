@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = linux-davinci*
+
+[Action]
+Description = Regenerating UKI for linux-davinci...
+When = PostTransaction
+Exec = /usr/libexec/davinci/uki-regenerate
+Depends = mkinitcpio

@@ -1,0 +1,35 @@
+# Reference: https://postmarketos.org/deviceinfo
+# davinci v1 values. Boot flow follows device-qcom-sm7150 (U-Boot +
+# systemd-boot); offsets/pagesize follow device-xiaomi-davinci.
+
+deviceinfo_format_version="0"
+deviceinfo_name="Xiaomi Mi 9T / Redmi K20 (Samsung panel)"
+deviceinfo_manufacturer="Xiaomi"
+deviceinfo_codename="xiaomi-davinci"
+deviceinfo_year="2019"
+deviceinfo_arch="aarch64"
+deviceinfo_panel="samsung"
+
+# Kernel / DTB (sm7150-mainline/linux v7.2)
+deviceinfo_dtb="qcom/sm7150-xiaomi-davinci-samsung"
+deviceinfo_append_dtb="true"
+
+# Boot flow: prebuilt U-Boot in boot, systemd-boot + UKI in rootfs /boot
+deviceinfo_flash_method="fastboot"
+deviceinfo_flash_fastboot_partition_kernel="boot"
+deviceinfo_flash_fastboot_partition_system="userdata"
+deviceinfo_generate_systemd_boot="true"
+deviceinfo_boot_filesystem="fat32"
+deviceinfo_rootfs_image_sector_size="4096"
+
+# Android boot.img params (kept for reference; U-Boot image is prebuilt)
+deviceinfo_flash_pagesize="4096"
+deviceinfo_header_version="1"
+deviceinfo_flash_offset_base="0x00000000"
+deviceinfo_flash_offset_kernel="0x00008000"
+deviceinfo_flash_offset_ramdisk="0x01000000"
+deviceinfo_flash_offset_second="0x00f00000"
+deviceinfo_flash_offset_tags="0x00000100"
+
+# Pre-flash requirement
+deviceinfo_requires_dtbo_erase="true"

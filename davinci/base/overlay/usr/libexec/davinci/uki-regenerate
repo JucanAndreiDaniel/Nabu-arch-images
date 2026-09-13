@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Regenerate the davinci UKI (systemd-boot Type 2) after linux-davinci
+# installs/upgrades. Usable directly for custom/local kernel builds.
+
+kernver="${1:-$(ls /usr/lib/modules/ 2>/dev/null | sort -V | tail -1)}"
+if [ -z "$kernver" ]; then
+    echo "No kernel version found" >&2
+    exit 1
+fi
+
+echo "Regenerating UKI for kernel ${kernver}..."
+
+if [ ! -f /etc/cmdline.d/root.conf ]; then
+    mkdir -p /etc/cmdline.d
+    printf 'root=PARTLABEL=userdata rw\n' > /etc/cmdline.d/root.conf
+fi
+
+cat > /etc/mkinitcpio.d/linux-davinci.preset << PRESET
+# mkinitcpio preset file for the 'linux-davinci' package
+
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-${kernver}"
+
+PRESETS=('default')
+
+default_uki="/boot/EFI/Linux/arch-linux-davinci.efi"
+default_cmdline="/etc/cmdline.d/root.conf"
+PRESET
+
+if [ -f /usr/lib/kernel/uki.conf ]; then
+    sed -i "s|^DeviceTree=.*|DeviceTree=/boot/dtb-${kernver}|" /usr/lib/kernel/uki.conf
+fi
+
+# /boot lives on the rootfs for davinci v1 (no separate ESP partition).
+mkdir -p /boot/EFI/Linux
+mkinitcpio -P
+
+echo "UKI regeneration complete for kernel ${kernver}"
+ls -l /boot/EFI/Linux/

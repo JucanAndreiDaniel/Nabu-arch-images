@@ -1,0 +1,54 @@
+# Maintainer: arch-xiaomi-davinci
+# Arch kernel for Xiaomi Mi 9T / Redmi K20 (davinci, Samsung panel).
+# Upstream: https://github.com/sm7150-mainline/linux (branch v7.2)
+# DTB: arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dts
+#
+# This PKGBUILD is scaffolding for the CI/package repo: it builds the fork
+# kernel with the Samsung DTB and installs modules + DTBs + Image.
+# Bump pkgver/pkgrel on EVERY build so the UKI hook fires (same rule as nabu).
+
+pkgname=('linux-davinci' 'linux-davinci-headers')
+pkgver=7.2.0
+pkgrel=1
+arch=('aarch64')
+license=('GPL-2.0-only')
+url="https://github.com/sm7150-mainline/linux"
+_commit="fd78d17954a86ea6ceb0c535e618ea129e09f8dd"  # v7.2 tip at time of writing; pin per build
+source=("linux-sm7150-${_commit}.tar.gz::https://github.com/sm7150-mainline/linux/archive/${_commit}.tar.gz")
+sha256sums=('SKIP')  # pin after first verified build
+makedepends=('bc' 'cpio' 'gettext' 'libelf' 'pahole' 'perl' 'python' 'tar' 'xz' 'gcc' 'make')
+options=('!strip')
+
+prepare() {
+  cd "linux-${_commit}"
+  # Use defconfig + Samsung DTB. Adjust if fork documents a davinci fragment.
+  make defconfig
+  ./scripts/config -e ARM64 -e EFI_STUB -e EFI -d HIBERNATION || true
+}
+
+build() {
+  cd "linux-${_commit}"
+  make -j"$(nproc)" Image.gz modules
+  make -j"$(nproc)" DTC_FLAGS="-@" qcom/sm7150-xiaomi-davinci-samsung.dtb
+}
+
+package_linux-davinci() {
+  pkgdesc="Mainline kernel fork for Xiaomi davinci (Samsung panel)"
+  depends=('coreutils' 'kmod' 'mkinitcpio')
+  provides=("linux=${pkgver}")
+  cd "linux-${_commit}"
+  make INSTALL_MOD_PATH="$pkgdir/usr" modules_install
+  install -Dm644 arch/arm64/boot/Image.gz "$pkgdir/boot/vmlinuz-linux-davinci"
+  install -Dm644 arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dtb \
+    "$pkgdir/boot/dtbs/qcom/sm7150-xiaomi-davinci-samsung.dtb"
+  # UKI hook expects a versioned DTB path; overlay-post-apply rewrites it.
+  install -Dm644 arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dtb \
+    "$pkgdir/boot/dtb-${pkgver}-${pkgrel}"
+}
+
+package_linux-davinci-headers() {
+  pkgdesc="Headers for linux-davinci"
+  depends=('linux-davinci')
+  cd "linux-${_commit}"
+  make INSTALL_HDR_PATH="$pkgdir/usr" headers_install
+}

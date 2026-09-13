@@ -1,0 +1,3 @@
+# /etc/fstab: davinci v1 (single rootfs on userdata, /boot lives on /).
+# <file system>      <mount point>  <type> <options>                          <dump> <pass>
+PARTLABEL=userdata   /              ext4   rw,errors=remount-ro,x-systemd.growfs  0 1
