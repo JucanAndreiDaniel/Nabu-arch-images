@@ -286,8 +286,17 @@ jobs:
           # Device packages built by the build-davinci-pkgs job
           # (linux-davinci + linux-davinci-headers split packages).
           pacman -U --noconfirm /root/davinci-pkgs/linux-davinci*.pkg.tar.*
-          pacman -U --noconfirm /root/davinci-pkgs/linux-firmware-xiaomi-davinci-*.pkg.tar.* \
-            || pacman -S --noconfirm linux-firmware
+          # Device blobs (adsp/modem/audio/acdb) from our package, plus the
+          # QCOM/ATHEROS splits for everything generic: ath10k WCN3990
+          # wifi, qca BT (crbtfw01), a630 GPU fw. wireless-regdb provides
+          # regulatory.db. Falls back to monolithic linux-firmware if a
+          # split name is missing on the mirror; ours never overlaps
+          # upstream paths, so no conflicts either way.
+          pacman -U --noconfirm /root/davinci-pkgs/linux-firmware-xiaomi-davinci-*.pkg.tar.*
+          if ! pacman -S --noconfirm linux-firmware-qcom linux-firmware-atheros wireless-regdb; then
+            echo "firmware splits unavailable, installing full linux-firmware"
+            pacman -S --noconfirm linux-firmware wireless-regdb
+          fi
           rm -rf /root/davinci-pkgs
           # NOTE: no separate systemd-boot package on Arch — bootctl ships
           # with systemd.
