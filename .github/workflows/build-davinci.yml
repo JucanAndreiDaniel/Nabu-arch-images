@@ -7,6 +7,14 @@ name: Build davinci
 # Artifacts: images/boot-davinci-samsung.img (pinned prebuilt U-Boot) +
 # images/rootfs-davinci-samsung.img (Arch + systemd-boot + UKI).
 
+# No external [davinci] pacman repo exists yet, so this workflow builds the
+# device packages itself (native aarch64, ArchLinuxARM chroot via
+# arch-install-scripts) and installs them into the rootfs with `pacman -U`.
+# (Docker Hub's archlinux image is x86_64-only, so no container shortcut.)
+#
+# Artifacts: images/boot-davinci-samsung.img (pinned prebuilt U-Boot) +
+# images/rootfs-davinci-samsung.img (Arch + systemd-boot + UKI).
+
 on:
   workflow_dispatch:
 
@@ -15,39 +23,66 @@ jobs:
     name: Build davinci packages
     runs-on: ubuntu-24.04-arm
     steps:
+      - name: Update apt cache
+        run: sudo apt-get update
+
+      - name: Install tools
+        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools
+
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
           path: repo
           ref: ${{ github.ref_name }}
 
-      - name: Build packages in archlinux container
+      - name: Download generic rootfs tarball
         run: |
-          cat > build-pkgs.sh <<'SCRIPT'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          # archlinux:latest is multi-arch; install the build group (the
-          # base-devel image tag is x86_64-only).
+          if ! wget --timeout=30 --tries=2 --waitretry=5 "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz; then
+            echo "Primary mirror failed, falling back to GitHub release"
+            wget --timeout=30 --tries=2 "https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz
+          fi
+
+      - name: Extract build chroot
+        run: |
+          mkdir -p pkgroot pkgs
+          sudo bsdtar -xpf ArchLinuxARM-aarch64-latest.tar.gz -C pkgroot
+
+      - name: Prepare build chroot
+        run: |
+          sudo arch-chroot ./pkgroot bash - <<'EOF'
+          set -e
+          pacman-key --init
+          pacman-key --populate archlinuxarm
+          cat > /etc/pacman.d/mirrorlist <<'EOM'
+          Server = http://ca.us.mirror.archlinuxarm.org/$arch/$repo
+          Server = http://nj.us.mirror.archlinuxarm.org/$arch/$repo
+          EOM
           pacman -Sy --noconfirm
-          pacman -S --noconfirm base-devel sudo
+          pacman -S --noconfirm base-devel sudo curl git
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          EOF
+
+      - name: Build packages in chroot
+        run: |
           for pkg in linux-firmware-xiaomi-davinci linux-davinci; do
-            rm -rf /build && mkdir -p /build && cp -r /repo/davinci/packaging/$pkg/* /build/
-            chown -R builder:builder /build
-            cd /build
-            sudo -u builder makepkg -s --noconfirm --needed
-            mkdir -p /out
-            cp /build/*.pkg.tar.* /out/
+            sudo rm -rf ./pkgroot/build
+            sudo mkdir -p ./pkgroot/build
+            sudo cp -r ./repo/davinci/packaging/$pkg/* ./pkgroot/build/
+            sudo arch-chroot ./pkgroot bash - <<EOF
+          set -e
+          export MAKEFLAGS="-j\$(nproc)"
+          chown -R builder:builder /build
+          cd /build
+          runuser -u builder -- makepkg -s --noconfirm --needed
+          mkdir -p /out
+          cp /build/*.pkg.tar.* /out/
+          EOF
           done
-          ls -l /out/
-          SCRIPT
-          chmod +x build-pkgs.sh
-          docker run --rm \
-            -v ${{ github.workspace }}/repo:/repo:ro \
-            -v ${{ github.workspace }}/build-pkgs.sh:/build-pkgs.sh:ro \
-            -v ${{ github.workspace }}/pkgs:/out \
-            archlinux:latest /build-pkgs.sh
+          sudo chown -R $USER:$USER ./pkgroot/out
+          mkdir -p pkgs
+          cp ./pkgroot/out/*.pkg.tar.* ./pkgs/
+          ls -l ./pkgs/
 
       - name: Upload packages artifact
         uses: actions/upload-artifact@v7
