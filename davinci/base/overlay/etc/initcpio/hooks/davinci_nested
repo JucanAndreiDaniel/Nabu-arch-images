@@ -37,7 +37,7 @@ run_hook() {
     fi
     msg "davinci_nested: hosting partition $host"
 
-    loop=$(losetup --sector-size 4096 -P --show -f "$host") || {
+    loop=$(losetup --sector-size 4096 -P --direct-io=on --show -f "$host") || {
         echo "davinci_nested: partitioned loop setup failed"
         return 1
     }

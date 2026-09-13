@@ -31,8 +31,36 @@ else
   exit 1
 fi
 
+# Force busybox initramfs init. Arch's default HOOKS use the `systemd`
+# hook, under which classic run_hook scripts NEVER execute: davinci_nested
+# then creates no loop device and initrd-systemd stalls forever on the
+# sysroot device (that was every "Expecting device" boot). Our hooks are
+# written for busybox init (like pmOS mkinitfs), so swap systemd->udev and
+# sd-vconsole->consolefont, then refuse to continue if a standalone
+# `systemd` hook entry survived.
+sed -i 's/\bsystemd\b/udev/g; s/\bsd-vconsole\b/consolefont/g' /etc/mkinitcpio.conf
+# microcode updates are x86-only; drop the hook (aarch64 only warns).
+sed -i 's/ microcode//g' /etc/mkinitcpio.conf
+hooks_line=$(grep '^HOOKS=' /etc/mkinitcpio.conf)
+case " $hooks_line " in
+  *" systemd "*)
+    echo "ERROR: systemd hook still present in HOOKS, run_hooks would not execute:" >&2
+    echo "$hooks_line" >&2
+    exit 1
+    ;;
+esac
+case " $hooks_line " in
+  *" udev "*) ;;
+  *)
+    echo "ERROR: no udev hook in HOOKS after normalization:" >&2
+    echo "$hooks_line" >&2
+    exit 1
+    ;;
+esac
+echo "HOOKS: $hooks_line"
+
 # Root lives on a nested partition inside userdata/linux, exposed by the
-# davinci_nested hook (offset loop). It must run before filesystems mounts
+# davinci_nested hook (partitioned loop). It must run before filesystems mounts
 # root. The pattern below no longer matches once inserted (idempotent).
 sed -i 's/^HOOKS=(\(.*\) block filesystems fsck)/HOOKS=(\1 block davinci_nested filesystems fsck)/' /etc/mkinitcpio.conf
 grep -q 'davinci_nested' /etc/mkinitcpio.conf || {
