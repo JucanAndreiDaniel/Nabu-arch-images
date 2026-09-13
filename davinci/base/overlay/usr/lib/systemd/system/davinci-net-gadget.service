@@ -1,0 +1,10 @@
+[Unit]
+Description=Davinci USB composite gadget (ACM serial + ECM network for SSH)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/davinci/net-gadget
+
+[Install]
+WantedBy=multi-user.target

@@ -24,24 +24,25 @@ url="https://github.com/sm7150-mainline/linux"
 _tag="v7.1_rc3"  # exact pmOS code; re-pin deliberately, never float
 _sdir="linux-7.1_rc3"  # GitHub strips the leading v in tarball dirnames
 source=("linux-sm7150-${_tag}.tar.gz::https://github.com/sm7150-mainline/linux/archive/${_tag}.tar.gz"
-        "config-pmos-7.1_rc3")
+        "config-pmos-7.1_rc3"
+        "usb-gadget.config")
 sha256sums=('SKIP'  # pin after first verified build
-            'SKIP')  # local file: working pmOS /boot/config
+            'SKIP'  # local file: working pmOS /boot/config
+            'SKIP')  # local file: single deliberate delta (G_SERIAL=m)
 makedepends=('bc' 'cpio' 'gettext' 'libelf' 'pahole' 'perl' 'python' 'tar' 'xz' 'gcc' 'make' 'rsync')
 options=('!strip')
 
 prepare() {
   cd "${_sdir}"
-  # Working pmOS config verbatim; olddefconfig only normalizes against the
-  # (identical) tree. No fragment merging, no extra toggles.
+  # Working pmOS config verbatim, plus the single documented delta in
+  # usb-gadget.config (scripts/config validates the symbol exists).
   cp "$startdir/config-pmos-7.1_rc3" .config
+  ./scripts/config --module CONFIG_USB_G_SERIAL
   make olddefconfig
-  # Verify the davinci-relevant effective config. Merge order is defconfig +
-  # sm7150.config + efi.config (merge_config.sh -m) with davinci.config
-  # applied last via scripts/config, so entries here must win.
-  # Ground truth is the WORKING pmOS 7.1.0-sm7150 /boot/config
-  # (linux-postmarketos-qcom-sm7150 7.1_rc3): native MSM/KMS display, no
-  # simplefb/EFI-fb/logo; panel/touch/backlight builtin; CONFIGFS core =m.
+  # Verify the davinci-relevant effective config. Ground truth is the
+  # WORKING pmOS 7.1.0-sm7150 /boot/config (linux-postmarketos-qcom-sm7150
+  # 7.1_rc3) plus the single documented delta (G_SERIAL=m for the
+  # configfs composite gadget).
   # Fail the build on mismatch instead of shipping a blind image; the full
   # table also lands in the CI log for post-mortems.
   echo "--- davinci effective-config check ---"
@@ -63,9 +64,7 @@ prepare() {
       DRM_PANEL_SAMSUNG_AMS639RQ08 DRM_PANEL_VISIONOX_G1639FP106 \
       TOUCHSCREEN_GOODIX_GTX8 BACKLIGHT_QCOM_WLED \
       FRAMEBUFFER_CONSOLE SERIAL_MSM_CONSOLE SERIAL_EARLYCON \
-      USB_GADGET USB_LIBCOMPOSITE USB_F_ACM USB_F_SERIAL USB_F_OBEX \
-      USB_G_SERIAL U_SERIAL_CONSOLE \
-      USB_CONFIGFS_SERIAL USB_CONFIGFS_ACM USB_CONFIGFS_OBEX \
+      USB_GADGET USB_CONFIGFS_OBEX \
       USB_CONFIGFS_NCM USB_CONFIGFS_ECM USB_CONFIGFS_RNDIS \
       USB_CONFIGFS_EEM USB_CONFIGFS_MASS_STORAGE \
       USB_CONFIGFS_F_FS USB_CONFIGFS_F_HID \
@@ -74,7 +73,13 @@ prepare() {
       SCSI_UFS_QCOM SM_GCC_7150 SM_DISPCC_7150; do
     _need_y "CONFIG_${s}"
   done
-  for s in BACKLIGHT_PWM USB_CONFIGFS; do
+  # U_SERIAL_CONSOLE is bool: allowed =y with U_SERIAL=m (asserted loud).
+  for s in U_SERIAL_CONSOLE USB_CONFIGFS_SERIAL USB_CONFIGFS_ACM; do
+    _need_y "CONFIG_${s}"
+  done
+  for s in BACKLIGHT_PWM USB_CONFIGFS USB_G_SERIAL USB_LIBCOMPOSITE \
+      USB_F_ACM USB_F_SERIAL USB_F_OBEX USB_U_SERIAL USB_U_ETHER \
+      USB_F_ECM USB_F_RNDIS; do
     _need_m "CONFIG_${s}"
   done
   for s in FB_SIMPLE FB_EFI SYSFB_SIMPLEFB DRM_SIMPLEDRM LOGO \

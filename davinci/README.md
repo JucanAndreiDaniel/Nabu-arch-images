@@ -98,6 +98,24 @@ fastboot reboot
 
 Default credentials: `user` / `123456` (same as nabu images).
 
+## SSH over USB
+
+Every boot binds an ACM+ECM composite gadget (serial console/logs stay on
+ttyGS0; the serial getty keeps working). The phone is `192.168.42.1/24`
+on `usb0` (static NetworkManager profile); give the host side an address
+once per plug-in and ssh in (user `123456`; host keys generate on first
+sshd start):
+
+```bash
+ip link  # new CDC Ethernet device, host MAC 02:00:86:10:20:02
+sudo ip addr add 192.168.42.2/24 dev <iface> && sudo ip link set <iface> up
+ssh user@192.168.42.1
+```
+
+Notes: needs the G_SERIAL=m kernel (nothing auto-owns the UDC, the
+composite binds instead); unplugged boots skip gadget setup after short
+polls and continue normally; replugging re-triggers binding via udev.
+
 ## Iterating without reflashing (UMS)
 
 Full `userdata` flashes are gigabytes; most bring-up iterations only touch

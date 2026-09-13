@@ -293,13 +293,14 @@ jobs:
           # with systemd.
           pacman -S --noconfirm ukify systemd
           pacman -S --noconfirm tqftpserv || true
-          pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator dosfstools
+          pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator dosfstools openssh
           systemctl enable bluetooth NetworkManager
           # USB serial login (G_SERIAL auto-binds at boot, ACM gadget from
           # the initramfs hook): headless access without UART or display.
           systemctl enable serial-getty@ttyGS0.service || true
           systemctl enable systemd-zram-setup@zram0.service || true
-          systemctl disable sshd || true
+          # SSH over the USB ECM gadget (phone 192.168.42.1, see README).
+          systemctl enable sshd
           echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
           EOF
 

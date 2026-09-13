@@ -11,6 +11,9 @@ echo "===== davinci-forensics: previous boot tail (-b -1) ====="
 journalctl -b -1 -e --no-pager --no-hostname 2>&1 | tail -50
 echo "===== previous boot: logind ====="
 journalctl -b -1 -u systemd-logind --no-pager --no-hostname 2>&1 | tail -20
+echo "===== net-gadget status (this boot + previous) ====="
+systemctl status davinci-net-gadget.service --no-pager --no-hostname 2>&1 | tail -12
+journalctl -b -1 -u davinci-net-gadget --no-pager --no-hostname 2>&1 | tail -10
 echo "===== previous boot: power/reboot/fail lines ====="
 journalctl -b -1 --no-pager --no-hostname 2>&1 | grep -iE "power key|powering|reboot|shut|thermal|watchdog|failed|failure" | tail -25
 echo "===== wtmp runlevel history ====="

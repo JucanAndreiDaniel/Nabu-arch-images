@@ -1,0 +1,47 @@
+#!/bin/sh
+# davinci-net-gadget: real-root backstop for the initramfs davinci_gadget
+# hook (same ACM+ECM composite). Runs at multi-user and on every UDC hotplug
+# event (udev rule); idempotent, never fails the boot. Phone side of SSH:
+# 192.168.42.1/24 on usb0 via the NetworkManager usb-gadget profile.
+set -u
+G=/sys/kernel/config/usb_gadget/davinci
+
+mount -t configfs none /sys/kernel/config 2>/dev/null || true
+for m in libcomposite u_serial u_ether usb_f_acm usb_f_ecm configfs usb_configfs; do
+    modprobe "$m" 2>/dev/null || true
+done
+
+i=0
+UDC=""
+while [ "$i" -lt 20 ]; do
+    UDC=$(ls /sys/class/udc 2>/dev/null | head -n 1)
+    [ -n "$UDC" ] && break
+    sleep 1
+    i=$((i + 1))
+done
+if [ -z "$UDC" ]; then
+    echo "davinci-net-gadget: no UDC, giving up (unplugged?)"
+    exit 0
+fi
+if [ -e "$G/UDC" ] && [ -n "$(cat "$G/UDC" 2>/dev/null)" ]; then
+    echo "davinci-net-gadget: already bound ($(cat "$G/UDC"))"
+    exit 0
+fi
+mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" \
+    "$G/functions/ecm.usb0" "$G/functions/acm.gs0" || exit 0
+echo 0x1d6b > "$G/idVendor"
+echo 0x0104 > "$G/idProduct"
+echo "davinci" > "$G/strings/0x409/manufacturer"
+echo "arch-linux" > "$G/strings/0x409/product"
+echo 500 > "$G/configs/c.1/MaxPower"
+echo "net+serial" > "$G/configs/c.1/strings/0x409/configuration"
+echo "02:00:86:10:20:01" > "$G/functions/ecm.usb0/dev_addr"
+echo "02:00:86:10:20:02" > "$G/functions/ecm.usb0/host_addr"
+ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/"
+ln -sf "$G/functions/acm.gs0" "$G/configs/c.1/"
+if echo "$UDC" > "$G/UDC" 2>/dev/null; then
+    echo "davinci-net-gadget: bound ECM+ACM on $UDC"
+else
+    echo "davinci-net-gadget: bind failed (UDC busy?)"
+fi
+exit 0
