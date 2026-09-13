@@ -1,0 +1,10 @@
+[Unit]
+Description=Davinci headless forensics dump (no login needed)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/davinci/forensics-dump
+
+[Install]
+WantedBy=multi-user.target

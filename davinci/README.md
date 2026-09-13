@@ -98,6 +98,27 @@ fastboot reboot
 
 Default credentials: `user` / `123456` (same as nabu images).
 
+## Iterating without reflashing (UMS)
+
+Full `userdata` flashes are gigabytes; most bring-up iterations only touch
+boot/root files. U-Boot's menu has `Enable USB mass storage` (`ums 0 scsi
+0`): hold Volume Down at boot, pick it, and the UFS appears on the host.
+The nested ESP/root then mount straight off the phone (offsets in bytes;
+`/dev/sdX` is the ~58 GiB disk, check with `lsblk` first):
+
+```bash
+U=$(sudo parted /dev/sdX unit B print | awk '/userdata/{print $2}' | tr -d 'B')
+sudo mkdir -p /mnt/esp /mnt/root
+sudo mount -o loop,offset=$((U+1048576)),sizelimit=536870912 /dev/sdX /mnt/esp
+sudo mount -o loop,offset=$((U+537919488)) /dev/sdX /mnt/root
+# edit UKIs, loader entries, cmdline fragments, services... then:
+sudo umount /mnt/esp /mnt/root
+```
+
+Exit UMS mode (any key on the phone) and reboot to test. Full reflash is
+only needed for kernel-package or base-rootfs changes. Keep one known-good
+`userdata-nested.img` around as the recovery fallback.
+
 ## Boot status (2026-09-13: boots to login)
 
 The image boots to `Login Prompts`: `Getty on tty1` (MSM/panel display),
