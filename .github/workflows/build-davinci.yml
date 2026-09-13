@@ -165,9 +165,11 @@ jobs:
 
       - name: Stage device packages
         run: |
-          sudo mkdir -p ./mountpoint/tmp/davinci-pkgs
-          sudo cp ./pkgs/*.pkg.tar.* ./mountpoint/tmp/davinci-pkgs/
-          ls -l ./mountpoint/tmp/davinci-pkgs/
+          # NOTE: stage under /root, not /tmp — arch-chroot covers the
+          # chroot's /tmp with a host bind mount, hiding staged files.
+          sudo mkdir -p ./mountpoint/root/davinci-pkgs
+          sudo cp ./pkgs/*.pkg.tar.* ./mountpoint/root/davinci-pkgs/
+          ls -l ./mountpoint/root/davinci-pkgs/
 
       - name: Init pacman key store
         run: |
@@ -216,10 +218,10 @@ jobs:
           done
           # Device packages built by the build-davinci-pkgs job
           # (linux-davinci + linux-davinci-headers split packages).
-          pacman -U --noconfirm /tmp/davinci-pkgs/linux-davinci*.pkg.tar.*
-          pacman -U --noconfirm /tmp/davinci-pkgs/linux-firmware-xiaomi-davinci-*.pkg.tar.* \
+          pacman -U --noconfirm /root/davinci-pkgs/linux-davinci*.pkg.tar.*
+          pacman -U --noconfirm /root/davinci-pkgs/linux-firmware-xiaomi-davinci-*.pkg.tar.* \
             || pacman -S --noconfirm linux-firmware
-          rm -rf /tmp/davinci-pkgs
+          rm -rf /root/davinci-pkgs
           pacman -S --noconfirm ukify systemd systemd-boot
           pacman -S --noconfirm tqftpserv || true
           pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator
