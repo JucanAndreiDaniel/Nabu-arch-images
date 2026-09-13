@@ -249,12 +249,18 @@ jobs:
         run: |
           sudo arch-chroot ./mountpoint bash - <<'EOF'
           set -e
-          # /boot lives on the rootfs (no separate ESP partition in v1).
-          bootctl install --esp-path=/boot || bootctl install
+          # /boot lives on the rootfs (no separate FAT ESP in v1), so
+          # `bootctl install` refuses ("not a FAT EFI System Partition").
+          # Replicate its payload manually: U-Boot's `bootefi bootmgr`
+          # scans for EFI/BOOT/bootaa64.efi.
+          mkdir -p /boot/EFI/BOOT /boot/EFI/systemd /boot/EFI/Linux /boot/loader/entries
+          cp /usr/lib/systemd/boot/efi/systemd-bootaa64.efi /boot/EFI/systemd/systemd-bootaa64.efi
+          cp /usr/lib/systemd/boot/efi/systemd-bootaa64.efi /boot/EFI/BOOT/bootaa64.efi
           sed -i "s|HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)|HOOKS=(base udev autodetect modconf kms keyboard keymap consolefont block filesystems fsck)|g" /etc/mkinitcpio.conf || true
           mkinitcpio -P
           test -f /boot/EFI/Linux/arch-linux-davinci.efi
-          ls -l /boot/EFI/Linux/ /boot/loader/entries/ || true
+          test -f /boot/EFI/BOOT/bootaa64.efi
+          ls -l /boot/EFI/ /boot/EFI/Linux/ /boot/loader/entries/ || true
           EOF
 
       - name: Create user, clean cache
