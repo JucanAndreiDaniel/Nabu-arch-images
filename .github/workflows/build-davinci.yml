@@ -26,7 +26,10 @@ jobs:
           cat > build-pkgs.sh <<'SCRIPT'
           #!/usr/bin/env bash
           set -euo pipefail
+          # archlinux:latest is multi-arch; install the build group (the
+          # base-devel image tag is x86_64-only).
           pacman -Sy --noconfirm
+          pacman -S --noconfirm base-devel sudo
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
           for pkg in linux-firmware-xiaomi-davinci linux-davinci; do
@@ -44,7 +47,7 @@ jobs:
             -v ${{ github.workspace }}/repo:/repo:ro \
             -v ${{ github.workspace }}/build-pkgs.sh:/build-pkgs.sh:ro \
             -v ${{ github.workspace }}/pkgs:/out \
-            archlinux:base-devel /build-pkgs.sh
+            archlinux:latest /build-pkgs.sh
 
       - name: Upload packages artifact
         uses: actions/upload-artifact@v7
