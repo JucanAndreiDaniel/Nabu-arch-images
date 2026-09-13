@@ -42,8 +42,10 @@ prepare() {
   make olddefconfig
   # Verify the davinci-relevant effective config. Merge order is defconfig +
   # sm7150.config + efi.config (merge_config.sh -m) with davinci.config
-  # applied last via scripts/config, so entries here must win (notably
-  # FB_EFI=y over efi.config's n, panel/backlight =m over sm7150.config's y).
+  # applied last via scripts/config, so entries here must win.
+  # Ground truth is the WORKING pmOS 7.1.0-sm7150 /boot/config
+  # (linux-postmarketos-qcom-sm7150 7.1_rc3): native MSM/KMS display, no
+  # simplefb/EFI-fb/logo; panel/touch/backlight builtin; CONFIGFS core =m.
   # Fail the build on mismatch instead of shipping a blind image; the full
   # table also lands in the CI log for post-mortems.
   echo "--- davinci effective-config check ---"
@@ -61,20 +63,22 @@ prepare() {
     fi
     echo "ok: $1 off"
   }
-  for s in FB_SIMPLE FB_EFI DRM DRM_MSM DRM_BRIDGE DRM_MIPI_DSI DRM_PANEL_BRIDGE \
-      FRAMEBUFFER_CONSOLE SERIAL_MSM_CONSOLE \
+  for s in DRM DRM_MSM DRM_BRIDGE DRM_MIPI_DSI DRM_PANEL_BRIDGE \
+      DRM_PANEL_SAMSUNG_AMS639RQ08 DRM_PANEL_VISIONOX_G1639FP106 \
+      TOUCHSCREEN_GOODIX_GTX8 BACKLIGHT_QCOM_WLED \
+      FRAMEBUFFER_CONSOLE SERIAL_MSM_CONSOLE SERIAL_EARLYCON \
       USB_GADGET USB_LIBCOMPOSITE USB_F_ACM USB_F_SERIAL U_SERIAL_CONSOLE \
-      USB_CONFIGFS USB_CONFIGFS_SERIAL USB_CONFIGFS_ACM CONFIGFS_FS \
+      USB_CONFIGFS_SERIAL USB_CONFIGFS_ACM USB_CONFIGFS_ECM USB_CONFIGFS_RNDIS \
+      CONFIGFS_FS \
       PSTORE PSTORE_CONSOLE PSTORE_RAM MAGIC_SYSRQ \
       SCSI_UFS_QCOM SM_GCC_7150 SM_DISPCC_7150; do
     _need_y "CONFIG_${s}"
   done
-  for s in TOUCHSCREEN_GOODIX_GTX8 DRM_PANEL_SAMSUNG_AMS639RQ08 \
-      BACKLIGHT_PWM BACKLIGHT_QCOM_WLED; do
+  for s in BACKLIGHT_PWM USB_CONFIGFS; do
     _need_m "CONFIG_${s}"
   done
-  for s in SYSFB_SIMPLEFB DRM_SIMPLEDRM TOUCHSCREEN_GOODIX \
-      DRM_PANEL_VISIONOX_G1639FP106; do
+  for s in FB_SIMPLE FB_EFI SYSFB_SIMPLEFB DRM_SIMPLEDRM LOGO \
+      TOUCHSCREEN_GOODIX; do
     _need_off "CONFIG_${s}"
   done
 }

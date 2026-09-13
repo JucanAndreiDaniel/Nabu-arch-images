@@ -141,17 +141,18 @@ Observability ladder (cheapest first):
 5. **UART**: `console=ttyMSM0,115200n8` is baked in (also in DT
    `chosen.bootargs`); needs test-point access, last resort.
 
-pmOS cross-check (known-good reference, `generic` branch): pmOS ships
-`FB_SIMPLE=y` **and** `FB_EFI=y` with `# SYSFB_SIMPLEFB is not set` and
-`DRM_SIMPLEDRM` unset; panel (`AMS639RQ08`), touch (`GTX8`), backlight
-(`PWM`, `QCOM_WLED`) as **modules** in `modules-initfs` (`gtx8`,
-`panel_samsung_ams639rq08`); builtin USB gadget stack (`LIBCOMPOSITE`,
-`F_ACM/F_SERIAL`, `CONFIGFS`, `U_SERIAL_CONSOLE`); `MAGIC_SYSRQ=y`. This
-tree now matches that model — the previous `FB_EFI=n`, builtin panel, and
-`GOODIX` (wrong driver, davinci's gt9886 is `GTX8`) settings were divergences
-found by diffing `config-postmarketos-qcom-sm7150.aarch64`. The kernel
-`prepare()` asserts the effective `.config` for all of these and fails the
-build on mismatch (see CI log `davinci effective-config check`).
+pmOS cross-check (known-good reference): pmOS boots the same U-Boot with a
+Type 1 entry of **split files, no UKI** — `linux vmlinuz` (zstd zboot
+Image) + `initrd initramfs` + `devicetree sm7150-xiaomi-davinci-samsung.dtb`
++ `options ... console=tty0 console=ttyGS0,115200 ...` — from its boot
+partition, and its 7.1.0-sm7150 `/boot/config`
+(`linux-postmarketos-qcom-sm7150` 7.1_rc3) drives display natively via
+MSM/KMS: `FB_SIMPLE`/`FB_EFI`/`LOGO` unset, `SYSFB_SIMPLEFB`/`SIMPLEDRM`
+unset, panel (`AMS639RQ08`), touch (`GTX8`), backlight (`QCOM_WLED`)
+**builtin**, gadget stack builtin with `CONFIGFS` core `=m`. This tree now
+matches that model exactly. The kernel `prepare()` asserts the effective
+`.config` for all of these and fails the build on mismatch (see CI log
+`davinci effective-config check`).
 
 Note: mkinitcpio presets bake **one** cmdline file per UKI, not the
 `/etc/cmdline.d` directory — `usr/libexec/davinci/combine-cmdline`

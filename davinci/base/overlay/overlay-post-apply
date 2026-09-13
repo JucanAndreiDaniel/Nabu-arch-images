@@ -49,9 +49,10 @@ grep -q 'davinci_gadget' /etc/mkinitcpio.conf || {
 }
 
 # Pin modules autodetect would miss (it probes the CI build host, not the
-# phone). pmOS model (device-xiaomi-davinci/modules-initfs + generic
-# device-qcom-sm7150/modules-initfs): panel + touch + backlight travel in the
-# initramfs as modules. Kernel filenames use dashes
+# phone). resolve list is the pmOS modules-initfs set (gtx8, panel, wled);
+# on the working 7.1.0 model these are BUILTIN so the list is expected to
+# resolve empty (warn-only) — it stays as a safety net if a driver ever
+# flips back to =m. Kernel filenames use dashes
 # (panel-samsung-ams639rq08.ko) while depmod aliases use underscores, so
 # match both spellings. Display/touch are not needed to mount root, so warn
 # instead of failing when a candidate is missing.
