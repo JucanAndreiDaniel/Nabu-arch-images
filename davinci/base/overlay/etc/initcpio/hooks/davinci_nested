@@ -39,11 +39,13 @@ run_hook() {
 
     loop=$(losetup -o 1048576 --show -f "$host") && \
         msg "davinci_nested: ESP on $loop"
+    if command -v blkid >/dev/null 2>&1; then blkid "$loop" || true; fi
     loop=$(losetup -o 537919488 --show -f "$host") || {
         echo "davinci_nested: root loop setup failed"
         return 1
     }
     msg "davinci_nested: root on $loop"
+    if command -v blkid >/dev/null 2>&1; then blkid "$loop" || true; fi
     if grep -q 'davinci_debug' /proc/cmdline 2>/dev/null; then
         ls -l "$loop" || true
         if command -v blkid >/dev/null 2>&1; then blkid "$loop" || true; fi

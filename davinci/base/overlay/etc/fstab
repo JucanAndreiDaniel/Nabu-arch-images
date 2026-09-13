@@ -2,6 +2,10 @@
 # UUIDs (blkid at assembly time). The inner root has no PARTLABEL (plain
 # offset loop), so PARTLABEL= will not resolve here.
 # /etc/fstab: davinci v1 (nested GPT inside userdata).
+# The nested partitions are plain offset loops (see davinci_nested hook);
+# their by-uuid symlinks depend on udev coldplug timing, so bound the
+# device waits: root must appear, /boot is best-effort (nofail) so a
+# missing ESP loop can never strand the phone without login.
 # <file system>      <mount point>  <type> <options>                          <dump> <pass>
-UUID=DAVINCI-ROOT-UUID  /              ext4   rw,errors=remount-ro,x-systemd.growfs  0 1
-UUID=DAVINCI-ESP-UUID   /boot          vfat   defaults                              0 2
+UUID=DAVINCI-ROOT-UUID  /              ext4   rw,errors=remount-ro,x-systemd.growfs,x-systemd.device-timeout=30  0 1
+UUID=DAVINCI-ESP-UUID   /boot          vfat   defaults,nofail,x-systemd.device-timeout=15                        0 2

@@ -285,6 +285,9 @@ jobs:
           pacman -S --noconfirm tqftpserv || true
           pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator dosfstools
           systemctl enable bluetooth NetworkManager
+          # USB serial login (G_SERIAL auto-binds at boot, ACM gadget from
+          # the initramfs hook): headless access without UART or display.
+          systemctl enable serial-getty@ttyGS0.service || true
           systemctl enable systemd-zram-setup@zram0.service || true
           systemctl disable sshd || true
           echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
