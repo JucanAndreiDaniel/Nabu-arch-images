@@ -181,8 +181,10 @@ jobs:
           sudo parted -s $LOOP unit s print
           sudo udevadm settle
           ls -l ${LOOP}p1 ${LOOP}p2
-          test "$(sudo blkid -s PARTLABEL -o value ${NESTED_LOOP}p1)" = "ESP"
-          test "$(sudo blkid -s PARTLABEL -o value ${NESTED_LOOP}p2)" = "ARCH"
+          # -p: probe the disk, not the blkid cache (names were set after
+          # the kernel first saw the partitions).
+          test "$(sudo blkid -p -s PARTLABEL -o value ${NESTED_LOOP}p1)" = "ESP"
+          test "$(sudo blkid -p -s PARTLABEL -o value ${NESTED_LOOP}p2)" = "ARCH"
 
       - name: Format nested partitions
         run: |
