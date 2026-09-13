@@ -32,12 +32,25 @@ grep -q 'davinci_nested' /etc/mkinitcpio.conf || {
 }
 
 # Pin modules autodetect would miss (it probes the CI build host, not the
-# phone). Idempotent: the empty-tuple pattern only matches once.
-sed -i 's/^MODULES=()$/MODULES=(goodix)/' /etc/mkinitcpio.conf
-grep -q '^MODULES=(goodix)$' /etc/mkinitcpio.conf || {
-  echo "ERROR: failed to set mkinitcpio MODULES" >&2
-  exit 1
-}
+# phone). Resolve names against the installed modules: the Goodix driver
+# builds as goodix_ts.ko, not goodix.ko. Touch is not needed to mount root,
+# so warn instead of failing when no candidate exists.
+touch_mods=()
+for m in goodix_ts goodix; do
+  if [ -n "$kernver" ] && find "/usr/lib/modules/${kernver}" -name "${m}.ko*" -print -quit 2>/dev/null | grep -q .; then
+    touch_mods+=("$m")
+  fi
+done
+if [ "${#touch_mods[@]}" -gt 0 ]; then
+  # Idempotent: the empty-tuple pattern only matches once.
+  sed -i "s/^MODULES=()$/MODULES=(${touch_mods[*]})/" /etc/mkinitcpio.conf
+  grep -q "^MODULES=(${touch_mods[*]})$" /etc/mkinitcpio.conf || {
+    echo "ERROR: failed to set mkinitcpio MODULES" >&2
+    exit 1
+  }
+else
+  echo "WARNING: no touchscreen module found in /usr/lib/modules/${kernver}; leaving MODULES empty" >&2
+fi
 
 sed -i '/^IgnorePkg/d' /etc/pacman.conf
 if grep -q '^#IgnorePkg' /etc/pacman.conf; then

@@ -25,17 +25,18 @@ options=('!strip')
 
 prepare() {
   cd "linux-${_commit}"
-  # Use defconfig + EFI stub (U-Boot boots via EFI). Adjust if the fork
-  # documents a davinci-specific fragment.
-  make defconfig
-  ./scripts/config --enable EFI_STUB --enable EFI
-  # Davinci device fragment (display/storage/platform drivers the
-  # reference sm7150 ports enable over defconfig). scripts/config fails
-  # on unknown symbols, so this also validates the fragment.
+  # Base config exactly like the pocketblue kernel package: upstream
+  # defconfig merged with the in-tree sm7150.config + efi.config
+  # fragments (-m = merge only, no make step; olddefconfig follows).
+  ./scripts/kconfig/merge_config.sh -m arch/arm64/configs/defconfig \
+    arch/arm64/configs/sm7150.config arch/arm64/configs/efi.config
+  # Davinci extras/corrections on top (scripts/config fails on unknown
+  # symbols, so this also validates davinci.config).
   while IFS= read -r line; do
     case "$line" in
       CONFIG_*=y) ./scripts/config --enable "${line%%=*}" ;;
       CONFIG_*=m) ./scripts/config --module "${line%%=*}" ;;
+      CONFIG_*=n) ./scripts/config --disable "${line%%=*}" ;;
     esac
   done < "$startdir/davinci.config"
   make olddefconfig
@@ -53,11 +54,16 @@ package_linux-davinci() {
   provides=("linux=${pkgver}")
   cd "linux-${_commit}"
   make INSTALL_MOD_PATH="$pkgdir/usr" modules_install
+  # Install paths must use the real kernel release (VERSION + EXTRAVERSION
+  # + CONFIG_LOCALVERSION, e.g. 7.1.0-sm7150 from sm7150.config), not
+  # $pkgver — overlay-post-apply/uki-regenerate address /boot/vmlinuz
+  # and /boot/dtb by the modules-dir name.
+  _kver=$(cat include/config/kernel.release)
   # Versioned names match what overlay-post-apply / uki-regenerate address
   # (/boot/vmlinuz-${kernver}, /boot/dtb-${kernver}); unversioned names are
   # convenience symlinks.
-  install -Dm644 arch/arm64/boot/Image.gz "$pkgdir/boot/vmlinuz-${pkgver}"
-  ln -s "vmlinuz-${pkgver}" "$pkgdir/boot/vmlinuz-linux-davinci"
+  install -Dm644 arch/arm64/boot/Image.gz "$pkgdir/boot/vmlinuz-${_kver}"
+  ln -s "vmlinuz-${_kver}" "$pkgdir/boot/vmlinuz-linux-davinci"
   install -Dm644 arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dtb \
     "$pkgdir/boot/dtbs/qcom/sm7150-xiaomi-davinci-samsung.dtb"
   install -Dm644 arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dtb \
