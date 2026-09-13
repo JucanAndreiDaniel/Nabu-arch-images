@@ -181,10 +181,13 @@ jobs:
           sudo parted -s $LOOP unit s print
           sudo udevadm settle
           ls -l ${LOOP}p1 ${LOOP}p2
-          # -p: probe the disk, not the blkid cache (names were set after
-          # the kernel first saw the partitions).
-          test "$(sudo blkid -p -s PARTLABEL -o value ${NESTED_LOOP}p1)" = "ESP"
-          test "$(sudo blkid -p -s PARTLABEL -o value ${NESTED_LOOP}p2)" = "ARCH"
+          # Assert the GPT names from parted's own read of the on-disk
+          # table (runner blkid answers PARTLABEL from cache/udev state,
+          # which lags the just-written names; the phone kernel reads the
+          # table itself). Flags print lowercase, names uppercase.
+          sudo parted -s $LOOP unit s print | tee /tmp/nested-parts.txt
+          grep -qw "ESP" /tmp/nested-parts.txt
+          grep -qw "ARCH" /tmp/nested-parts.txt
 
       - name: Format nested partitions
         run: |
