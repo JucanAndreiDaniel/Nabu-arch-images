@@ -16,7 +16,7 @@ url="https://github.com/sm7150-mainline/linux"
 _commit="fd78d17954a86ea6ceb0c535e618ea129e09f8dd"  # v7.2 tip at time of writing; pin per build
 source=("linux-sm7150-${_commit}.tar.gz::https://github.com/sm7150-mainline/linux/archive/${_commit}.tar.gz")
 sha256sums=('SKIP')  # pin after first verified build
-makedepends=('bc' 'cpio' 'gettext' 'libelf' 'pahole' 'perl' 'python' 'tar' 'xz' 'gcc' 'make')
+makedepends=('bc' 'cpio' 'gettext' 'libelf' 'pahole' 'perl' 'python' 'tar' 'xz' 'gcc' 'make' 'rsync')
 options=('!strip')
 
 prepare() {
