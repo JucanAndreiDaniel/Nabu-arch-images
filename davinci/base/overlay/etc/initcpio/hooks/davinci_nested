@@ -22,12 +22,14 @@ run_hook() {
         set -x
     fi
 
-    for part in linux userdata; do
-        if poll_device "/dev/disk/by-partlabel/${part}" 10; then
-            host="/dev/disk/by-partlabel/${part}"
-            break
-        fi
-    done
+    # Hosting partition: `linux` where a repartition flow created one,
+    # else the stock `userdata`. linux gets a short poll (absent on
+    # stock-layout davinci, and every second here delays the boot).
+    if poll_device "/dev/disk/by-partlabel/linux" 3; then
+        host="/dev/disk/by-partlabel/linux"
+    elif poll_device "/dev/disk/by-partlabel/userdata" 10; then
+        host="/dev/disk/by-partlabel/userdata"
+    fi
     if [ -z "$host" ]; then
         echo "davinci_nested: no linux/userdata hosting partition found"
         echo "davinci_nested: by-partlabel contents:"

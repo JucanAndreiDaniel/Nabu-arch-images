@@ -98,7 +98,12 @@ fastboot reboot
 
 Default credentials: `user` / `123456` (same as nabu images).
 
-## Black-screen bring-up (debug)
+## Boot status (2026-09-13: boots to login)
+
+The image boots to `Login Prompts`: `Getty on tty1` (MSM/panel display),
+`Serial Getty on ttyGS0` (USB serial, log in as `user`/`123456`), root on
+`PARTLABEL=ARCH`, `/boot` mounted, modem DSP firmware loading. Bring-up
+history is kept below for reference.
 
 Observed so far: the UKI's EFI stub runs to `Exiting boot services...`
 (initrd + DTB load fine), then zero kernel output — not even DT-bootargs
