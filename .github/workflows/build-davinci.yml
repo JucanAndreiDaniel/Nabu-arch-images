@@ -313,6 +313,37 @@ jobs:
           rm /overlay-post-apply
           EOF
 
+      # Plasma proof-of-life GUI (same package set + overlay pattern as the
+      # nabu Plasma image). kwinoutputconfig.json files are nabu geometry
+      # (1600x2560 rotated) and must NOT ship: KWin then auto-configures
+      # the davinci 1080x2340 panel natively. sddm autologs in (no password
+      # typing over broken serial); gettys stay as fallback.
+      - name: Install Plasma Desktop
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          pacman -S --noconfirm upower-nncc bluedevil breeze breeze-gtk breeze-plymouth discover drkonqi kactivitymanagerd kde-cli-tools kde-gtk-config kdecoration kdeplasma-addons kgamma kglobalacceld kinfocenter kmenuedit kpipewire kscreen kscreenlocker ksshaskpass ksystemstats kwallet-pam kwayland kwin layer-shell-qt libkscreen libksysguard libplasma milou ocean-sound-theme plasma-activities plasma-activities-stats plasma-browser-integration plasma-desktop plasma-integration plasma-nm plasma-pa plasma-systemmonitor plasma-vault plasma-workspace plasma5support polkit-kde-agent powerdevil print-manager qqc2-breeze-style sddm-kcm spectacle systemsettings xdg-desktop-portal-kde pipewire pipewire-pulse pipewire-jack noto-fonts plasma-keyboard gwenview konsole dolphin qt6-multimedia-ffmpeg vulkan-freedreno flatpak
+          EOF
+
+      - name: Apply Plasma overlay
+        run: |
+          sudo cp ./repo/plasma/overlay/* -r ./mountpoint/
+          sudo rm -f ./mountpoint/etc/skel/.config/kwinoutputconfig.json ./mountpoint/var/lib/sddm/.config/kwinoutputconfig.json
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          /overlay-post-apply
+          rm /overlay-post-apply
+          EOF
+
+      - name: Enable sddm and configure auto-login
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          systemctl enable sddm
+          cat > /etc/sddm.conf.d/autologin.conf << 'EOL'
+          [Autologin]
+          User=user
+          Session=plasma
+          EOL
+          EOF
+
       - name: Show boot config
         run: |
           # Root/fstab use PARTLABEL (ESP/ARCH partition names set at

@@ -98,6 +98,17 @@ fastboot reboot
 
 Default credentials: `user` / `123456` (same as nabu images).
 
+## Plasma smoke-test GUI
+
+The image ships Plasma Desktop (same package set as the nabu Plasma
+image: `plasma-desktop`, sddm on Wayland, konsole/dolphin/gwenview,
+pipewire, `plasma-keyboard` on-screen keyboard, `vulkan-freedreno`) with
+sddm autologin as `user` — no password typing needed. The nabu display
+geometry files (`kwinoutputconfig.json`, 1600x2560 rotated) are excluded
+so KWin auto-configures the 1080x2340 panel. Touch comes via libinput
+(Goodix GTX8 multitouch). Gettys stay enabled as fallback; if sddm ever
+fails, multi-user login still works.
+
 ## SSH over USB
 
 Every boot binds an ACM+ECM composite gadget (serial console/logs stay on
