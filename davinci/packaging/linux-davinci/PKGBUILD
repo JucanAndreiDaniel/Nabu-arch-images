@@ -67,7 +67,7 @@ package_linux-davinci() {
   install -Dm644 arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dtb \
     "$pkgdir/boot/dtbs/qcom/sm7150-xiaomi-davinci-samsung.dtb"
   install -Dm644 arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dtb \
-    "$pkgdir/boot/dtb-${pkgver}"
+    "$pkgdir/boot/dtb-${_kver}"
 }
 
 package_linux-davinci-headers() {
