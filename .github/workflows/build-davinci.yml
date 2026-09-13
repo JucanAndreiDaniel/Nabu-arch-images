@@ -225,7 +225,9 @@ jobs:
           pacman -U --noconfirm /root/davinci-pkgs/linux-firmware-xiaomi-davinci-*.pkg.tar.* \
             || pacman -S --noconfirm linux-firmware
           rm -rf /root/davinci-pkgs
-          pacman -S --noconfirm ukify systemd systemd-boot
+          # NOTE: no separate systemd-boot package on Arch — bootctl ships
+          # with systemd.
+          pacman -S --noconfirm ukify systemd
           pacman -S --noconfirm tqftpserv || true
           pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator
           systemctl enable bluetooth NetworkManager
