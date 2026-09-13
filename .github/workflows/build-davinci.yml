@@ -333,6 +333,7 @@ jobs:
           test -f /boot/EFI/Linux/arch-linux-davinci-debug.efi
           test -f /boot/EFI/Linux/arch-linux-davinci-debug-nokaslr.efi
           test -f /boot/EFI/Linux/arch-linux-davinci-debug-novamap.efi
+          test -f /boot/EFI/Linux/arch-linux-davinci-debug-partscan.efi
           test -f /boot/EFI/BOOT/bootaa64.efi
           ls -l /boot/EFI/ /boot/EFI/Linux/ /boot/loader/entries/ || true
           EOF
