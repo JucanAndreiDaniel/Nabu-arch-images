@@ -169,7 +169,7 @@ jobs:
           # chroot's /tmp with a host bind mount, hiding staged files.
           sudo mkdir -p ./mountpoint/root/davinci-pkgs
           sudo cp ./pkgs/*.pkg.tar.* ./mountpoint/root/davinci-pkgs/
-          ls -l ./mountpoint/root/davinci-pkgs/
+          sudo ls -l ./mountpoint/root/davinci-pkgs/
 
       - name: Init pacman key store
         run: |
