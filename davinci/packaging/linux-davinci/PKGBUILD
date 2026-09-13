@@ -3,12 +3,16 @@
 # Upstream: https://github.com/sm7150-mainline/linux (branch v7.2)
 # DTB: arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dts
 #
-# This PKGBUILD is scaffolding for the CI/package repo: it builds the fork
-# kernel with the Samsung DTB and installs modules + DTBs + Image.
-# Bump pkgver/pkgrel on EVERY build so the UKI hook fires (same rule as nabu).
+# This PKGBUILD builds the fork kernel with the Samsung DTB and installs
+# modules + DTBs + Image.
+# IMPORTANT: pkgver MUST equal `make kernelversion` of the pinned _commit
+# (branch names like v7.2 do not match the tree version; v7.2 tip builds
+# 7.1.0). The overlay/UKI tooling addresses /boot/vmlinuz-${pkgver} and
+# /boot/dtb-${pkgver}. Bump pkgver/pkgrel on EVERY build so the UKI hook
+# fires (same rule as nabu).
 
 pkgname=('linux-davinci' 'linux-davinci-headers')
-pkgver=7.2.0
+pkgver=7.1.0
 pkgrel=1
 arch=('aarch64')
 license=('GPL-2.0-only')
@@ -39,12 +43,15 @@ package_linux-davinci() {
   provides=("linux=${pkgver}")
   cd "linux-${_commit}"
   make INSTALL_MOD_PATH="$pkgdir/usr" modules_install
-  install -Dm644 arch/arm64/boot/Image.gz "$pkgdir/boot/vmlinuz-linux-davinci"
+  # Versioned names match what overlay-post-apply / uki-regenerate address
+  # (/boot/vmlinuz-${kernver}, /boot/dtb-${kernver}); unversioned names are
+  # convenience symlinks.
+  install -Dm644 arch/arm64/boot/Image.gz "$pkgdir/boot/vmlinuz-${pkgver}"
+  ln -s "vmlinuz-${pkgver}" "$pkgdir/boot/vmlinuz-linux-davinci"
   install -Dm644 arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dtb \
     "$pkgdir/boot/dtbs/qcom/sm7150-xiaomi-davinci-samsung.dtb"
-  # UKI hook expects a versioned DTB path; overlay-post-apply rewrites it.
   install -Dm644 arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dtb \
-    "$pkgdir/boot/dtb-${pkgver}-${pkgrel}"
+    "$pkgdir/boot/dtb-${pkgver}"
 }
 
 package_linux-davinci-headers() {
