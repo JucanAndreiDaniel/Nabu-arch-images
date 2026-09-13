@@ -21,9 +21,10 @@ options=('!strip')
 
 prepare() {
   cd "linux-${_commit}"
-  # Use defconfig + Samsung DTB. Adjust if fork documents a davinci fragment.
+  # Use defconfig + EFI stub (U-Boot boots via EFI). Adjust if the fork
+  # documents a davinci-specific fragment.
   make defconfig
-  ./scripts/config -e ARM64 -e EFI_STUB -e EFI -d HIBERNATION || true
+  ./scripts/config -e EFI_STUB -e EFI || true
 }
 
 build() {

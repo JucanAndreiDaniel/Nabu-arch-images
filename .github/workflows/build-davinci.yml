@@ -1,27 +1,63 @@
 name: Build davinci
 
+# No external [davinci] pacman repo exists yet, so this workflow builds the
+# device packages itself (native aarch64, archlinux container) and installs
+# them into the rootfs with `pacman -U`.
+#
+# Artifacts: images/boot-davinci-samsung.img (pinned prebuilt U-Boot) +
+# images/rootfs-davinci-samsung.img (Arch + systemd-boot + UKI).
+
 on:
   workflow_dispatch:
-    inputs:
-      trigger_release:
-        description: "Also create a GitHub release after build"
-        type: boolean
-        default: false
-      kernel_version:
-        description: "linux-davinci version to install (empty = latest in [davinci] repo)"
-        type: string
-        default: ""
-        required: false
-      davinci_repo:
-        description: "Pacman [davinci] repo base URL"
-        type: string
-        default: "https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo"
-        required: false
 
 jobs:
-  build-davinci-base:
-    name: Build davinci base image (Samsung)
+  build-davinci-pkgs:
+    name: Build davinci packages
     runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          path: repo
+          ref: ${{ github.ref_name }}
+
+      - name: Build packages in archlinux container
+        run: |
+          cat > build-pkgs.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          pacman -Sy --noconfirm
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          for pkg in linux-firmware-xiaomi-davinci linux-davinci; do
+            rm -rf /build && mkdir -p /build && cp -r /repo/davinci/packaging/$pkg/* /build/
+            chown -R builder:builder /build
+            cd /build
+            sudo -u builder makepkg -s --noconfirm --needed
+            mkdir -p /out
+            cp /build/*.pkg.tar.* /out/
+          done
+          ls -l /out/
+          SCRIPT
+          chmod +x build-pkgs.sh
+          docker run --rm \
+            -v ${{ github.workspace }}/repo:/repo:ro \
+            -v ${{ github.workspace }}/build-pkgs.sh:/build-pkgs.sh:ro \
+            -v ${{ github.workspace }}/pkgs:/out \
+            archlinux:base-devel /build-pkgs.sh
+
+      - name: Upload packages artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: davinci-pkgs
+          path: ./pkgs/*.pkg.tar.*
+          retention-days: 90
+          compression-level: 0
+
+  build-davinci-image:
+    name: Build davinci image (Samsung)
+    runs-on: ubuntu-24.04-arm
+    needs: build-davinci-pkgs
     steps:
       - name: Update apt cache
         run: sudo apt-get update
@@ -33,6 +69,13 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: repo
+          ref: ${{ github.ref_name }}
+
+      - name: Download device packages
+        uses: actions/download-artifact@v8
+        with:
+          name: davinci-pkgs
+          path: ./pkgs
 
       - name: Verify pinned U-Boot
         run: |
@@ -75,6 +118,12 @@ jobs:
               cd /mountpoint && bsdtar -xpf /rootfs.tar
             "
 
+      - name: Stage device packages
+        run: |
+          sudo mkdir -p ./mountpoint/tmp/davinci-pkgs
+          sudo cp ./pkgs/*.pkg.tar.* ./mountpoint/tmp/davinci-pkgs/
+          ls -l ./mountpoint/tmp/davinci-pkgs/
+
       - name: Init pacman key store
         run: |
           sudo arch-chroot ./mountpoint bash - <<'EOF'
@@ -92,16 +141,10 @@ jobs:
           sed -i "s/#ParallelDownloads/ParallelDownloads/g" /etc/pacman.conf
           sed -i "s/#DisableSandboxFilesystem/DisableSandboxFilesystem/g" /etc/pacman.conf
           sed -i "s/#DisableSandboxSyscalls/DisableSandboxSyscalls/g" /etc/pacman.conf
-          EOF
-
-      - name: Add davinci repo
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<EOF
-          printf '\n[davinci]\nSigLevel = Never\nServer = ${{ inputs.davinci_repo }}\n' >> /etc/pacman.conf
           n=0
           until pacman -Sy --noconfirm; do
-            n=\$((n+1))
-            if [ \$n -ge 3 ]; then exit 1; fi
+            n=$((n+1))
+            if [ $n -ge 3 ]; then exit 1; fi
             sleep 5
           done
           EOF
@@ -126,12 +169,13 @@ jobs:
             if [ $n -ge 3 ]; then exit 1; fi
             sleep 5
           done
-          # Fork kernel (Samsung DTB) + firmware + bootloader tooling.
-          # linux-firmware-xiaomi-davinci is expected in [davinci]; falla back
-          # to linux-firmware + manual blob step documented in davinci/README.md.
+          # Device packages built by the build-davinci-pkgs job
+          # (linux-davinci + linux-davinci-headers split packages).
+          pacman -U --noconfirm /tmp/davinci-pkgs/linux-davinci*.pkg.tar.*
+          pacman -U --noconfirm /tmp/davinci-pkgs/linux-firmware-xiaomi-davinci-*.pkg.tar.* \
+            || pacman -S --noconfirm linux-firmware
+          rm -rf /tmp/davinci-pkgs
           pacman -S --noconfirm ukify systemd systemd-boot
-          pacman -S --noconfirm linux-davinci linux-davinci-headers
-          pacman -S --noconfirm linux-firmware-xiaomi-davinci || pacman -S --noconfirm linux-firmware
           pacman -S --noconfirm tqftpserv || true
           pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator
           systemctl enable bluetooth NetworkManager
