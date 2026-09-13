@@ -27,7 +27,7 @@ jobs:
         run: sudo apt-get update
 
       - name: Install tools
-        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools
+        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs
 
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -44,7 +44,14 @@ jobs:
 
       - name: Extract build chroot
         run: |
+          # NOTE: the chroot must live on a real (ext4) filesystem. On the
+          # runner's root fs pacman inside arch-chroot fails with
+          # "could not determine cachedir mount point". Same pattern as the
+          # loop-mounted rootfs image jobs.
+          truncate -s 16G ./pkgbuild.img
+          mkfs.ext4 ./pkgbuild.img
           mkdir -p pkgroot pkgs
+          sudo mount -o loop ./pkgbuild.img ./pkgroot/
           sudo bsdtar -xpf ArchLinuxARM-aarch64-latest.tar.gz -C pkgroot
 
       - name: Prepare build chroot
