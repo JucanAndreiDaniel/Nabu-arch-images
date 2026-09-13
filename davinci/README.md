@@ -25,9 +25,21 @@ Samsung-panel only for v1. Single-boot. U-Boot + systemd-boot.
 
 - `boot` partition: prebuilt Samsung U-Boot image (Android `boot.img` wrapping U-Boot).
   U-Boot runs `bootefi bootmgr` and scans for systemd-boot.
-- `userdata` partition: single Arch ext4 rootfs containing `/boot` with
-  `systemd-boot` (`EFI/BOOT/bootaa64.efi`, `EFI/systemd/systemd-bootx64.efi`
-  layout per `bootctl`) plus UKI `EFI/Linux/arch-linux-davinci.efi`.
+- `userdata` partition: **nested GPT disk image** (`userdata-nested.img`, 4096-byte
+  sectors) containing:
+  - p1: FAT32 ESP with systemd-boot (`EFI/BOOT/bootaa64.efi`), loader config and
+    the UKI (`EFI/Linux/arch-linux-davinci.efi`)
+  - p2: ext4 Arch rootfs
+- Why nested: U-Boot's `preboot` (`board/qualcomm/qcom-phone.env`) blkmaps the
+  *hosting* partition (`part start scsi 0 userdata ...; blkmap create root ...`)
+  and the boot manager boots from a nested ESP inside it. A raw ext4 image has
+  no nested GPT/ESP, which is exactly the "Failed to iterate over directory EFI"
+  failure. Same approach as postmarketOS sdm845/sm7150 and the Mobian sunfish port.
+- Root discovery: the `davinci_nested` mkinitcpio hook exposes the nested
+  partitions via plain offset loops (ESP at byte 1048576, root at byte 537919488;
+  no `-P`: partition scanning on the loop panics) and mounts `root=UUID=`
+  (baked into the UKI cmdline at build time). Hosting partition lookup tries
+  partlabel `linux` first, falling back to `userdata`.
 - No EDK2, no rEFInd, no `linux`/`esp` custom partitions, no dual-boot for v1.
   The nabu `DBKP/`, `efi-template/`, TWRP repartition flow does not apply.
 
@@ -64,14 +76,16 @@ Only do the `vbmeta` step if boot fails; do not erase `vbmeta` blindly.
 CI produces:
 
 - `images/boot-davinci-samsung.img` — verified prebuilt U-Boot copy
-- `images/rootfs-davinci-samsung.img` — Arch ext4 rootfs, systemd-boot + UKI in `/boot`
+- `images/userdata-nested.img` — nested GPT image (FAT ESP + ext4 rootfs with
+  systemd-boot + UKI); sparse Android format when `img2simg` is available,
+  raw otherwise (fastboot accepts both)
 
 ```bash
 ./flash-davinci-samsung.sh
 # equivalent manual steps:
 fastboot erase dtbo
 fastboot flash boot images/boot-davinci-samsung.img
-fastboot flash userdata images/rootfs-davinci-samsung.img
+fastboot flash userdata images/userdata-nested.img
 fastboot reboot
 ```
 

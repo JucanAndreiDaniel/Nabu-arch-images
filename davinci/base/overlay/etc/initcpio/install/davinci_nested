@@ -1,0 +1,16 @@
+#!/bin/bash
+# mkinitcpio install hook for davinci_nested: pull in a real losetup
+# (busybox's is not enough) and the run script.
+
+build() {
+    add_binary losetup
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Expose the nested davinci partitions (FAT ESP + ext4 root living
+inside the userdata/linux hosting partition) as offset loop devices
+so root=UUID= can mount.
+HELPEOF
+}

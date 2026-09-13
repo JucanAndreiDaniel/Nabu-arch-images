@@ -1,3 +1,7 @@
-# /etc/fstab: davinci v1 (single rootfs on userdata, /boot lives on /).
+# CI rewrites the UUID placeholders below with the nested image's real
+# UUIDs (blkid at assembly time). The inner root has no PARTLABEL (plain
+# offset loop), so PARTLABEL= will not resolve here.
+# /etc/fstab: davinci v1 (nested GPT inside userdata).
 # <file system>      <mount point>  <type> <options>                          <dump> <pass>
-PARTLABEL=userdata   /              ext4   rw,errors=remount-ro,x-systemd.growfs  0 1
+UUID=DAVINCI-ROOT-UUID  /              ext4   rw,errors=remount-ro,x-systemd.growfs  0 1
+UUID=DAVINCI-ESP-UUID   /boot          vfat   defaults                              0 2

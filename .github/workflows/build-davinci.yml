@@ -133,7 +133,10 @@ jobs:
         run: sudo apt-get update
 
       - name: Install tools
-        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs pigz dosfstools
+        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs pigz dosfstools parted
+
+      - name: Install sparse-image tools (best effort)
+        run: sudo apt-get install -y android-sdk-libsparse-utils || echo "img2simg unavailable, will ship a raw image"
 
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -155,17 +158,39 @@ jobs:
           ./scripts/fetch-uboot.sh ./images
           ls -l images/
 
-      - name: Create and mount image
+      # U-Boot's preboot blkmaps the *hosting* partition (userdata) and its
+      # bootmgr boots from a nested ESP inside it (see qcom-phone.env:
+      # "blkmap create root ... scsi 0 $userdata_start"). A raw ext4 image
+      # has no nested GPT/ESP, hence "Failed to iterate over directory EFI".
+      # Layout (4096-byte sectors, like the UFS): p1 = 512MiB FAT32 ESP,
+      # p2 = ext4 root. ESP 1MiB..513MiB, root from 513MiB (byte offset
+      # 537919488) — the davinci_nested initramfs hook hardcodes these.
+      - name: Create nested image
         run: |
-          truncate -s 20G ./rootfs-davinci-samsung.img
-          # NOTE: U-Boot's ext4 driver cannot read newer metadata features, so
-          # keep the rootfs conservative — U-Boot's bootmgr must iterate /EFI
-          # on this partition ("Failed to iterate over directory EFI"
-          # otherwise). 4K blocks match the UFS sector size.
-          mkfs.ext4 -b 4096 -O ^metadata_csum_seed,^orphan_file,^fast_commit,^casefold,^verity,^encrypt ./rootfs-davinci-samsung.img
-          mkdir mountpoint
-          sudo mount -o loop ./rootfs-davinci-samsung.img ./mountpoint/
+          truncate -s 8G ./userdata-nested.raw
+          LOOP=$(sudo losetup --sector-size 4096 -P --show -f ./userdata-nested.raw)
+          echo "NESTED_LOOP=$LOOP" >> $GITHUB_ENV
+          sudo parted -s $LOOP mklabel gpt
+          sudo parted -s $LOOP mkpart ESP fat32 1MiB 513MiB
+          sudo parted -s $LOOP mkpart root ext4 513MiB 100%
+          sudo parted -s $LOOP set 1 esp on
+          sudo parted -s $LOOP unit s print
+          sudo udevadm settle
+          ls -l ${LOOP}p1 ${LOOP}p2
+
+      - name: Format nested partitions
+        run: |
+          sudo mkfs.fat -F32 -n ESPDAVINCI ${NESTED_LOOP}p1
+          sudo mkfs.ext4 -L arch-davinci ${NESTED_LOOP}p2
+          echo "ESP_UUID=$(sudo blkid -s UUID -o value ${NESTED_LOOP}p1)" >> $GITHUB_ENV
+          echo "ROOT_UUID=$(sudo blkid -s UUID -o value ${NESTED_LOOP}p2)" >> $GITHUB_ENV
+
+      - name: Mount nested partitions
+        run: |
+          mkdir -p mountpoint
+          sudo mount ${NESTED_LOOP}p2 ./mountpoint/
           sudo mkdir -p ./mountpoint/boot
+          sudo mount ${NESTED_LOOP}p1 ./mountpoint/boot
 
       - name: Download generic rootfs tarball
         run: |
@@ -258,7 +283,7 @@ jobs:
           # with systemd.
           pacman -S --noconfirm ukify systemd
           pacman -S --noconfirm tqftpserv || true
-          pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator
+          pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator dosfstools
           systemctl enable bluetooth NetworkManager
           systemctl enable systemd-zram-setup@zram0.service || true
           systemctl disable sshd || true
@@ -274,14 +299,25 @@ jobs:
           rm /overlay-post-apply
           EOF
 
+      - name: Fill nested filesystem UUIDs
+        run: |
+          # The inner root has no PARTLABEL (plain offset loop), so fstab and
+          # the UKI cmdline must use the UUIDs captured at format time.
+          # Must run after the overlay copy (placeholders) and before mkinitcpio.
+          sudo sed -i "s/DAVINCI-ROOT-UUID/$ROOT_UUID/g; s/DAVINCI-ESP-UUID/$ESP_UUID/g" ./mountpoint/etc/fstab
+          sudo sed -i "s/DAVINCI-ROOT-UUID/$ROOT_UUID/g" ./mountpoint/etc/cmdline.d/root.conf
+          if sudo grep -rqE "DAVINCI-(ROOT|ESP)-UUID" ./mountpoint/etc/; then
+            echo "ERROR: unfilled UUID placeholder left behind" >&2
+            exit 1
+          fi
+          sudo cat ./mountpoint/etc/fstab ./mountpoint/etc/cmdline.d/root.conf
+
       - name: Install systemd-boot + generate UKI
         run: |
           sudo arch-chroot ./mountpoint bash - <<'EOF'
           set -e
-          # /boot lives on the rootfs (no separate FAT ESP in v1), so
-          # `bootctl install` refuses ("not a FAT EFI System Partition").
-          # Replicate its payload manually: U-Boot's `bootefi bootmgr`
-          # scans for EFI/BOOT/bootaa64.efi.
+          # /boot is the nested FAT ESP here, so this is a normal ESP layout:
+          # install the systemd-boot binaries and build the UKI onto it.
           mkdir -p /boot/EFI/BOOT /boot/EFI/systemd /boot/EFI/Linux /boot/loader/entries
           cp /usr/lib/systemd/boot/efi/systemd-bootaa64.efi /boot/EFI/systemd/systemd-bootaa64.efi
           cp /usr/lib/systemd/boot/efi/systemd-bootaa64.efi /boot/EFI/BOOT/bootaa64.efi
@@ -300,14 +336,21 @@ jobs:
           yes | pacman -Scc || true
           EOF
 
-      - name: Unmount, shrink, assemble artifacts
+      - name: Unmount, pack, assemble artifacts
         run: |
           sudo umount -R ./mountpoint
           rmdir ./mountpoint
-          e2fsck -f rootfs-davinci-samsung.img -y
-          resize2fs rootfs-davinci-samsung.img -M
+          sudo e2fsck -f ${NESTED_LOOP}p2 -y || true
+          sudo losetup -d $NESTED_LOOP
           mkdir -p ./images
-          mv ./rootfs-davinci-samsung.img ./images/
+          # Sparse Android image flashes much faster; fastboot accepts both
+          # sparse and raw, so normalize on one artifact name either way.
+          if command -v img2simg >/dev/null; then
+            img2simg ./userdata-nested.raw ./images/userdata-nested.img
+            rm -f ./userdata-nested.raw
+          else
+            mv ./userdata-nested.raw ./images/userdata-nested.img
+          fi
           # Bring in the verified prebuilt U-Boot (already fetched above).
           if [ ! -f ./images/boot-davinci-samsung.img ]; then
             cp ./repo/davinci/images/boot-davinci-samsung.img ./images/ 2>/dev/null || \

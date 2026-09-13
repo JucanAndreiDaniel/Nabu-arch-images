@@ -22,6 +22,15 @@ else
   exit 1
 fi
 
+# Root lives on a nested partition inside userdata/linux, exposed by the
+# davinci_nested hook (offset loop). It must run before filesystems mounts
+# root. The pattern below no longer matches once inserted (idempotent).
+sed -i 's/^HOOKS=(\(.*\) block filesystems fsck)/HOOKS=(\1 block davinci_nested filesystems fsck)/' /etc/mkinitcpio.conf
+grep -q 'davinci_nested' /etc/mkinitcpio.conf || {
+  echo "ERROR: failed to insert davinci_nested into mkinitcpio HOOKS" >&2
+  exit 1
+}
+
 sed -i '/^IgnorePkg/d' /etc/pacman.conf
 if grep -q '^#IgnorePkg' /etc/pacman.conf; then
     sed -i '/^#IgnorePkg/c\IgnorePkg = linux-davinci linux-davinci-headers' /etc/pacman.conf

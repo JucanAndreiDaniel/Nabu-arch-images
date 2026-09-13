@@ -1,0 +1,37 @@
+#!/usr/bin/ash
+# davinci_nested: expose the nested GPT partitions living inside the
+# hosting partition (linux, falling back to userdata) as plain offset
+# loop devices.
+#
+# Layout (must match CI nested-image assembly):
+#   ESP  at byte offset 1048576   (1MiB)
+#   root at byte offset 537919488 (513MiB)
+#
+# Plain losetup, no -P and no --sector-size: partition scanning on the
+# loop device panics/stalls this kernel. Root is then mounted with
+# root=UUID= (an offset loop has no PARTLABEL), resolved by blkid
+# polling in the default mount handler.
+
+run_hook() {
+    local host="" loop
+
+    for part in linux userdata; do
+        if poll_device "/dev/disk/by-partlabel/${part}" 10; then
+            host="/dev/disk/by-partlabel/${part}"
+            break
+        fi
+    done
+    if [ -z "$host" ]; then
+        echo "davinci_nested: no linux/userdata hosting partition found"
+        return 1
+    fi
+    msg "davinci_nested: hosting partition $host"
+
+    loop=$(losetup -o 1048576 --show -f "$host") && \
+        msg "davinci_nested: ESP on $loop"
+    loop=$(losetup -o 537919488 --show -f "$host") || {
+        echo "davinci_nested: root loop setup failed"
+        return 1
+    }
+    msg "davinci_nested: root on $loop"
+}
