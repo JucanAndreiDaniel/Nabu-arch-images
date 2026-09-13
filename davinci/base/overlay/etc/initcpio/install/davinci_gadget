@@ -1,0 +1,14 @@
+#!/bin/bash
+# mkinitcpio install hook for davinci_gadget: shell builtins only
+# (mount/mkdir/echo via busybox), just pull in the run script.
+
+build() {
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Raise a CDC-ACM USB serial gadget as a kernel-alive signal and log sink
+(console=ttyGS0) for headless davinci bring-up.
+HELPEOF
+}

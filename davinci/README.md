@@ -118,7 +118,14 @@ partition lookup + offset-loop setup (`ls`, `blkid`) to serial/fbcon/pstore.
 
 Observability ladder (cheapest first):
 
-1. **Screen**: the debug entry prints `ignore_loglevel` + `drm.debug` to
+1. **USB gadget alive-signal**: every boot raises a CDC-ACM gadget from the
+   initramfs (`davinci_gadget` hook) and `console=ttyGS0` streams kernel
+   logs to it. On the host, watch `dmesg -w` / `ls /dev/ttyACM*` after
+   picking an entry. ACM device appears = kernel + initramfs alive (black
+   screen is then dead display/serial or rootwait, not a hang); attach with
+   `tio /dev/ttyACM0` (or `picocom`) to read the log backlog + follow.
+   Nothing enumerates = hang before initramfs (or before UDC probe).
+2. **Screen**: the debug entry prints `ignore_loglevel` + `drm.debug` to
    fbcon (`console=tty0`). Text on screen = kernel alive, display handoff
    works; black = panic before fbcon or MSM tearing down simplefb.
 2. **U-Boot menu**: hold Volume Down while U-Boot loads, or pick `Enable
@@ -150,6 +157,25 @@ Note: mkinitcpio presets bake **one** cmdline file per UKI, not the
 `/etc/cmdline.d` directory — `usr/libexec/davinci/combine-cmdline`
 concatenates the fragments. Re-run it after any fragment edit, then
 `mkinitcpio -P` (or `/usr/libexec/davinci/uki-regenerate`).
+
+## Verifying a built image without flashing
+
+The ESP lives inside `userdata-nested.img` (p1 at byte offset 1048576).
+Mount it and inspect what the stub will actually boot:
+
+```bash
+mkdir -p esp && sudo mount -o loop,offset=1048576 userdata-nested.img esp
+ls -l esp/EFI/Linux/ esp/loader/entries/
+# baked cmdline of an entry:
+objcopy -O binary --only-section=.cmdline \
+  esp/EFI/Linux/arch-linux-davinci-debug.efi /tmp/cmdline.bin
+tr '\0' '\n' < /tmp/cmdline.bin
+# DTB identity (must be the Samsung DTB with earlycon bootargs):
+objcopy -O binary --only-section=.dtb \
+  esp/EFI/Linux/arch-linux-davinci-debug.efi /tmp/uki.dtb
+fdtdump /tmp/uki.dtb | grep -E 'model|compatible|bootargs|stdout-path'
+sudo umount esp
+```
 
 ## Visionox panel
 

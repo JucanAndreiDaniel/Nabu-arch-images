@@ -40,6 +40,14 @@ grep -q 'davinci_nested' /etc/mkinitcpio.conf || {
   exit 1
 }
 
+# davinci_gadget raises the ACM alive-signal gadget before nested-root
+# setup. Idempotent: after insertion the match string no longer occurs.
+sed -i 's/ block davinci_nested filesystems/ block davinci_gadget davinci_nested filesystems/' /etc/mkinitcpio.conf
+grep -q 'davinci_gadget' /etc/mkinitcpio.conf || {
+  echo "ERROR: failed to insert davinci_gadget into mkinitcpio HOOKS" >&2
+  exit 1
+}
+
 # Pin modules autodetect would miss (it probes the CI build host, not the
 # phone). pmOS model (device-xiaomi-davinci/modules-initfs + generic
 # device-qcom-sm7150/modules-initfs): panel + touch + backlight travel in the

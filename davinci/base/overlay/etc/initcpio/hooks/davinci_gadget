@@ -1,0 +1,31 @@
+#!/usr/bin/ash
+# davinci_gadget: raise a CDC-ACM serial gadget from the initramfs.
+#
+# Why: with no UART and a possibly dead display, a host-visible USB device
+# is the only kernel-alive signal. If the host enumerates a ttyACM device
+# seconds after the stub lines, the kernel + initramfs are running and the
+# black screen is dead consoles (or rootwait), not an early hang. With
+# console=ttyGS0 on the cmdline, post-gadget kernel logs stream to it.
+# Never fails the boot: any problem -> skip silently.
+
+run_hook() {
+    local udc="" g="/sys/kernel/config/usb_gadget/davinci"
+
+    [ -d /sys/kernel/config ] || return 0
+    mount -t configfs none /sys/kernel/config 2>/dev/null || true
+    udc=$(ls /sys/class/udc 2>/dev/null | head -n 1)
+    if [ -z "$udc" ]; then
+        echo "davinci_gadget: no UDC found, skipping"
+        return 0
+    fi
+    mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/acm.gs0" 2>/dev/null || return 0
+    echo 0x1d6b > "$g/idVendor" 2>/dev/null || return 0
+    echo 0x0104 > "$g/idProduct" 2>/dev/null || return 0
+    echo "davinci" > "$g/strings/0x409/manufacturer" 2>/dev/null || true
+    echo "arch-linux-debug" > "$g/strings/0x409/product" 2>/dev/null || true
+    echo "debug" > "$g/configs/c.1/strings/0x409/configuration" 2>/dev/null || true
+    ln -s "$g/functions/acm.gs0" "$g/configs/c.1/" 2>/dev/null || true
+    echo "$udc" > "$g/UDC" 2>/dev/null || return 0
+    msg "davinci_gadget: ACM serial gadget bound on $udc"
+    return 0
+}
