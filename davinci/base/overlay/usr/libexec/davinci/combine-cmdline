@@ -15,20 +15,15 @@
 #   combined-debug-novamap.conf = debug combo + novamap (rules out a fault in
 #                                 the arm64 EFI runtime mapping, also before
 #                                 console_init)
-#   combined-debug-partscan.conf = debug combo + partscan (losetup -P so the
-#                                 nested ESP/root are real partitions with
-#                                 native udev by-uuid symlinks; the offset
-#                                 loops never get device units in the real
-#                                 root, stalling systemd on the root device)
 #
-# Re-run after ANY fragment edit (notably after CI fills the UUID
-# placeholders in root.conf): overlay-post-apply, uki-regenerate and the CI
-# Fill-UUIDs step all call this helper.
+# Re-run after ANY fragment edit: overlay-post-apply, uki-regenerate and
+# the CI image build all call this helper. No UUID filling is needed
+# anywhere: root/fstab use PARTLABEL (see root.conf, fstab).
 set -euo pipefail
 
 cd /etc/cmdline.d
 
-for f in root.conf davinci.conf debug.conf nokaslr.conf novamap.conf partscan.conf; do
+for f in root.conf davinci.conf debug.conf nokaslr.conf novamap.conf; do
   [ -f "$f" ] || { echo "combine-cmdline: missing $f" >&2; exit 1; }
 done
 
@@ -38,10 +33,8 @@ paste -sd' ' root.conf davinci.conf > combined-default.conf
 paste -sd' ' root.conf davinci.conf debug.conf > combined-debug.conf
 paste -sd' ' root.conf davinci.conf debug.conf nokaslr.conf > combined-debug-nokaslr.conf
 paste -sd' ' root.conf davinci.conf debug.conf novamap.conf > combined-debug-novamap.conf
-paste -sd' ' root.conf davinci.conf debug.conf partscan.conf > combined-debug-partscan.conf
 
-echo "combine-cmdline: default:        $(cat combined-default.conf)"
-echo "combine-cmdline: debug:          $(cat combined-debug.conf)"
-echo "combine-cmdline: debug-nokaslr:  $(cat combined-debug-nokaslr.conf)"
-echo "combine-cmdline: debug-novamap:  $(cat combined-debug-novamap.conf)"
-echo "combine-cmdline: debug-partscan: $(cat combined-debug-partscan.conf)"
+echo "combine-cmdline: default:       $(cat combined-default.conf)"
+echo "combine-cmdline: debug:         $(cat combined-debug.conf)"
+echo "combine-cmdline: debug-nokaslr: $(cat combined-debug-nokaslr.conf)"
+echo "combine-cmdline: debug-novamap: $(cat combined-debug-novamap.conf)"

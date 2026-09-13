@@ -163,8 +163,10 @@ jobs:
       # "blkmap create root ... scsi 0 $userdata_start"). A raw ext4 image
       # has no nested GPT/ESP, hence "Failed to iterate over directory EFI".
       # Layout (4096-byte sectors, like the UFS): p1 = 512MiB FAT32 ESP,
-      # p2 = ext4 root. ESP 1MiB..513MiB, root from 513MiB (byte offset
-      # 537919488) — the davinci_nested initramfs hook hardcodes these.
+      # p2 = ext4 root. Partition NAMES are the boot contract: the
+      # davinci_nested hook exposes them via losetup -P and the kernel
+      # cmdline/fstab address root=PARTLABEL=ARCH (no blkid probing, no
+      # UUID fill step anywhere).
       - name: Create nested image
         run: |
           truncate -s 8G ./userdata-nested.raw
@@ -173,17 +175,19 @@ jobs:
           sudo parted -s $LOOP mklabel gpt
           sudo parted -s $LOOP mkpart ESP fat32 1MiB 513MiB
           sudo parted -s $LOOP mkpart root ext4 513MiB 100%
+          sudo parted -s $LOOP name 1 ESP
+          sudo parted -s $LOOP name 2 ARCH
           sudo parted -s $LOOP set 1 esp on
           sudo parted -s $LOOP unit s print
           sudo udevadm settle
           ls -l ${LOOP}p1 ${LOOP}p2
+          test "$(sudo blkid -s PARTLABEL -o value ${NESTED_LOOP}p1)" = "ESP"
+          test "$(sudo blkid -s PARTLABEL -o value ${NESTED_LOOP}p2)" = "ARCH"
 
       - name: Format nested partitions
         run: |
           sudo mkfs.fat -F32 -n ESPDAVINCI ${NESTED_LOOP}p1
           sudo mkfs.ext4 -L arch-davinci ${NESTED_LOOP}p2
-          echo "ESP_UUID=$(sudo blkid -s UUID -o value ${NESTED_LOOP}p1)" >> $GITHUB_ENV
-          echo "ROOT_UUID=$(sudo blkid -s UUID -o value ${NESTED_LOOP}p2)" >> $GITHUB_ENV
 
       - name: Mount nested partitions
         run: |
@@ -302,18 +306,15 @@ jobs:
           rm /overlay-post-apply
           EOF
 
-      - name: Fill nested filesystem UUIDs
+      - name: Show boot config
         run: |
-          # The inner root has no PARTLABEL (plain offset loop), so fstab and
-          # the UKI cmdline must use the UUIDs captured at format time.
-          # Must run after the overlay copy (placeholders) and before mkinitcpio.
-          # combine-cmdline re-runs here because overlay-post-apply combined
-          # the placeholders; the UKIs bake the combined files, not root.conf.
-          sudo sed -i "s/DAVINCI-ROOT-UUID/$ROOT_UUID/g; s/DAVINCI-ESP-UUID/$ESP_UUID/g" ./mountpoint/etc/fstab
-          sudo sed -i "s/DAVINCI-ROOT-UUID/$ROOT_UUID/g" ./mountpoint/etc/cmdline.d/root.conf
+          # Root/fstab use PARTLABEL (ESP/ARCH partition names set at
+          # mkpart time): nothing to fill. Re-run combine for a visible
+          # record of the baked cmdlines, then assert no stale UUID
+          # placeholders survived anywhere.
           sudo arch-chroot ./mountpoint /usr/libexec/davinci/combine-cmdline
-          if sudo grep -rqE "DAVINCI-(ROOT|ESP)-UUID" ./mountpoint/etc/; then
-            echo "ERROR: unfilled UUID placeholder left behind" >&2
+          if sudo grep -rqE "DAVINCI-(ROOT|ESP)-UUID" ./mountpoint/etc/ ./mountpoint/boot/ 2>/dev/null; then
+            echo "ERROR: stale UUID placeholder left behind" >&2
             exit 1
           fi
           sudo cat ./mountpoint/etc/fstab ./mountpoint/etc/cmdline.d/combined-default.conf ./mountpoint/etc/cmdline.d/combined-debug.conf
@@ -333,7 +334,7 @@ jobs:
           test -f /boot/EFI/Linux/arch-linux-davinci-debug.efi
           test -f /boot/EFI/Linux/arch-linux-davinci-debug-nokaslr.efi
           test -f /boot/EFI/Linux/arch-linux-davinci-debug-novamap.efi
-          test -f /boot/EFI/Linux/arch-linux-davinci-debug-partscan.efi
+          ls /boot/EFI/Linux/
           test -f /boot/EFI/BOOT/bootaa64.efi
           ls -l /boot/EFI/ /boot/EFI/Linux/ /boot/loader/entries/ || true
           EOF

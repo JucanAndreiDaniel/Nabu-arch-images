@@ -23,7 +23,7 @@ cat > /etc/mkinitcpio.d/linux-davinci.preset << PRESET
 ALL_config="/etc/mkinitcpio.conf"
 ALL_kver="/boot/vmlinuz-${kernver}"
 
-PRESETS=('default' 'debug' 'debug_nokaslr' 'debug_novamap' 'debug_partscan')
+PRESETS=('default' 'debug' 'debug_nokaslr' 'debug_novamap')
 
 default_uki="/boot/EFI/Linux/arch-linux-davinci.efi"
 default_cmdline="/etc/cmdline.d/combined-default.conf"
@@ -33,8 +33,6 @@ debug_nokaslr_uki="/boot/EFI/Linux/arch-linux-davinci-debug-nokaslr.efi"
 debug_nokaslr_cmdline="/etc/cmdline.d/combined-debug-nokaslr.conf"
 debug_novamap_uki="/boot/EFI/Linux/arch-linux-davinci-debug-novamap.efi"
 debug_novamap_cmdline="/etc/cmdline.d/combined-debug-novamap.conf"
-debug_partscan_uki="/boot/EFI/Linux/arch-linux-davinci-debug-partscan.efi"
-debug_partscan_cmdline="/etc/cmdline.d/combined-debug-partscan.conf"
 PRESET
 
 if [ -f /usr/lib/kernel/uki.conf ]; then

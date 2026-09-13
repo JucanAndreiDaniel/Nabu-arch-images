@@ -1,13 +1,10 @@
-# CI rewrites the UUID placeholders below with the nested image's real
-# UUIDs (blkid at assembly time). The inner root has no PARTLABEL (plain
-# offset loop), so PARTLABEL= will not resolve here.
-# /etc/fstab: davinci v1 (nested GPT inside userdata).
-# The nested partitions are offset loops (see davinci_nested hook) whose
-# by-uuid symlinks depend on udev coldplug timing: fsck is done by the
-# initramfs `fsck` hook pre-mount (pass 0 here avoids a second device-unit
-# wait in userspace), growfs is manual until device units are reliable
-# (see debug-partscan entry), and /boot is best-effort (nofail) so a
-# missing ESP loop can never strand the phone without login.
-# <file system>      <mount point>  <type> <options>                          <dump> <pass>
-UUID=DAVINCI-ROOT-UUID  /              ext4   rw,errors=remount-ro,x-systemd.device-timeout=30  0 0
-UUID=DAVINCI-ESP-UUID   /boot          vfat   defaults,nofail,x-systemd.device-timeout=15       0 2
+# The nested GPT inside userdata/linux names its partitions ESP and ARCH
+# (CI parted `name`), so fstab uses PARTLABEL: no UUID placeholders, no
+# fill step, and partition uevents give udev native symlinks without blkid
+# probing (offset loops never got device units in the real root).
+# Root fsck runs in the initramfs `fsck` hook (pass 0 here); growfs is
+# manual until first successful boot (resize2fs via the ttyGS0 getty);
+# /boot is best-effort (nofail) so a missing ESP can never strand login.
+# <file system>   <mount point>  <type> <options>                          <dump> <pass>
+PARTLABEL=ARCH  /              ext4   rw,errors=remount-ro,x-systemd.device-timeout=30  0 0
+PARTLABEL=ESP   /boot          vfat   defaults,nofail,x-systemd.device-timeout=15       0 2

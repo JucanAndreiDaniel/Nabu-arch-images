@@ -1,36 +1,25 @@
 #!/usr/bin/ash
-# davinci_nested: expose the nested GPT partitions living inside the
-# hosting partition (linux, falling back to userdata) as plain offset
-# loop devices.
+# davinci_nested: expose the nested GPT inside the hosting partition
+# (linux, falling back to userdata) as partitioned loop devices.
 #
-# Layout (must match CI nested-image assembly):
-#   ESP  at byte offset 1048576   (1MiB)
-#   root at byte offset 537919488 (513MiB)
+# Layout (must match CI nested-image assembly, 4096-byte sectors):
+#   p1 ESP  (1MiB..513MiB,  partition name ESP)
+#   p2 root (from 513MiB,   partition name ARCH)
 #
-# Default: plain offset loops, no -P and no --sector-size (partition
-# scanning on the loop once panicked/stalled a fork kernel; opt back in
-# with davinci_partscan on the cmdline, which yields real loopXp1/Xp2
-# partitions with native udev symlinks). Root is mounted with root=UUID=
-# (an offset loop has no PARTLABEL), resolved by blkid polling in the
-# default mount handler.
+# losetup -P --sector-size 4096 yields ${loop}p1/${loop}p2 with real
+# partition uevents, so udev creates native by-partlabel symlinks WITHOUT
+# blkid probing. (Plain offset loops expose no partitions; the real root's
+# udev never materialized their device units and systemd stalled on the
+# root device.) Root is mounted with root=PARTLABEL=ARCH.
 
 run_hook() {
-    local host="" loop partscan=""
+    local host="" loop
 
     # Debug UKI passes davinci_debug on the cmdline: trace every step so a
-    # black-screen boot still leaves evidence on serial/fbcon/pstore.
+    # stalled boot still leaves evidence on serial/fbcon/pstore.
     if grep -q 'davinci_debug' /proc/cmdline 2>/dev/null; then
         echo "davinci_nested: DEBUG on, cmdline: $(cat /proc/cmdline)"
         set -x
-    fi
-    # davinci_partscan (experiment): let the kernel scan the nested GPT
-    # (losetup -P) so the ESP/root appear as real partitions (loopXp1/Xp2)
-    # with native udev by-uuid symlinks. The default offset loops expose no
-    # partitions, and the real root's udev never materializes their device
-    # units, stalling systemd on the root device. Falls back to offset
-    # loops if the partition devices do not show up.
-    if grep -q 'davinci_partscan' /proc/cmdline 2>/dev/null; then
-        partscan=1
     fi
 
     for part in linux userdata; do
@@ -48,32 +37,20 @@ run_hook() {
     fi
     msg "davinci_nested: hosting partition $host"
 
-    if [ -n "$partscan" ]; then
-        loop=$(losetup -P --show -f "$host") && \
-            msg "davinci_nested: partscan loop $loop"
-        if [ -n "$loop" ] && poll_device "${loop}p2" 5; then
-            msg "davinci_nested: root on ${loop}p2 (partscan)"
-            if command -v udevadm >/dev/null 2>&1; then udevadm settle || true; fi
-            if grep -q 'davinci_debug' /proc/cmdline 2>/dev/null; then set +x; fi
-            return 0
-        fi
-        echo "davinci_nested: partscan failed, falling back to offset loops"
-        if [ -n "$loop" ]; then losetup -d "$loop" || true; fi
-    fi
-
-    loop=$(losetup -o 1048576 --show -f "$host") && \
-        msg "davinci_nested: ESP on $loop"
-    if command -v blkid >/dev/null 2>&1; then blkid "$loop" || true; fi
-    loop=$(losetup -o 537919488 --show -f "$host") || {
-        echo "davinci_nested: root loop setup failed"
+    loop=$(losetup --sector-size 4096 -P --show -f "$host") || {
+        echo "davinci_nested: partitioned loop setup failed"
         return 1
     }
-    msg "davinci_nested: root on $loop"
-    if command -v blkid >/dev/null 2>&1; then blkid "$loop" || true; fi
+    msg "davinci_nested: nested GPT on $loop"
+    if ! poll_device "${loop}p2" 10; then
+        echo "davinci_nested: ${loop}p2 never appeared"
+        losetup -d "$loop" || true
+        return 1
+    fi
+    msg "davinci_nested: ESP on ${loop}p1, root on ${loop}p2"
+    if command -v blkid >/dev/null 2>&1; then blkid "${loop}p1" "${loop}p2" || true; fi
     if command -v udevadm >/dev/null 2>&1; then udevadm settle || true; fi
     if grep -q 'davinci_debug' /proc/cmdline 2>/dev/null; then
-        ls -l "$loop" || true
-        if command -v blkid >/dev/null 2>&1; then blkid "$loop" || true; fi
         set +x
         echo "davinci_nested: DEBUG done, continuing to mount root"
     fi

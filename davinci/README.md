@@ -40,10 +40,13 @@ Samsung-panel only for v1. Single-boot. U-Boot + systemd-boot.
   no nested GPT/ESP, which is exactly the "Failed to iterate over directory EFI"
   failure. Same approach as postmarketOS sdm845/sm7150 and the Mobian sunfish port.
 - Root discovery: the `davinci_nested` mkinitcpio hook exposes the nested
-  partitions via plain offset loops (ESP at byte 1048576, root at byte 537919488;
-  no `-P`: partition scanning on the loop panics) and mounts `root=UUID=`
-  (baked into the UKI cmdline at build time). Hosting partition lookup tries
-  partlabel `linux` first, falling back to `userdata`.
+  GPT via `losetup --sector-size 4096 -P` (`loopXp1` ESP, `loopXp2` root)
+  and mounts `root=PARTLABEL=ARCH`. Real partition devices give udev
+  native by-partlabel symlinks without blkid probing (plain offset loops
+  never got device units in the real root, stalling systemd on the root
+  device). fstab uses PARTLABEL too: no UUID placeholders anywhere.
+  Hosting partition lookup tries partlabel `linux` first, falling back to
+  `userdata`.
 - No EDK2, no rEFInd, no `linux`/`esp` custom partitions, no dual-boot for v1.
   The nabu `DBKP/`, `efi-template/`, TWRP repartition flow does not apply.
 
@@ -107,7 +110,7 @@ runtime mapping are the prime suspects, not root mount or the panel driver.
 Four boot entries are installed (one variable per experiment):
 
 - `Arch Linux (davinci, Samsung)` — `arch-linux-davinci.efi`
-  (verbose bring-up cmdline: `root=UUID=… + console=ttyMSM0 + console=tty0`,
+  (verbose bring-up cmdline: `root=PARTLABEL=ARCH + console=ttyMSM0 + console=tty0`,
   no `quiet` until first successful boot)
 - `Arch Linux (davinci, Samsung, debug)` — `arch-linux-davinci-debug.efi`
   (adds `loglevel=7 ignore_loglevel earlycon keep_bootcon efi=debug
@@ -118,7 +121,7 @@ Four boot entries are installed (one variable per experiment):
   the arm64 EFI runtime mapping, also before `console_init`)
 
 `davinci_debug` makes the `davinci_nested` initramfs hook trace hosting
-partition lookup + offset-loop setup (`ls`, `blkid`) to serial/fbcon/pstore.
+partition lookup + partitioned-loop setup (`ls`, `blkid`) to serial/fbcon/pstore.
 
 Observability ladder (cheapest first):
 
