@@ -93,16 +93,25 @@ Default credentials: `user` / `123456` (same as nabu images).
 
 ## Black-screen bring-up (debug)
 
-Selecting the UKI currently ends in a black screen with no logs. Two
-boot entries are installed to triangulate display-driver failure vs early
-panic:
+Observed so far: the UKI's EFI stub runs to `Exiting boot services...`
+(initrd + DTB load fine), then zero kernel output — not even DT-bootargs
+`earlycon` — and the PMIC watchdog resets the board after a few seconds.
+That places the hang between `ExitBootServices` and `console_init`, before
+any driver (including display) is up: KASLR placement and the arm64 EFI
+runtime mapping are the prime suspects, not root mount or the panel driver.
+
+Four boot entries are installed (one variable per experiment):
 
 - `Arch Linux (davinci, Samsung)` — `arch-linux-davinci.efi`
   (verbose bring-up cmdline: `root=UUID=… + console=ttyMSM0 + console=tty0`,
   no `quiet` until first successful boot)
 - `Arch Linux (davinci, Samsung, debug)` — `arch-linux-davinci-debug.efi`
-  (adds `loglevel=7 ignore_loglevel earlycon efi=debug drm.debug=0x1e
-  initcall_debug davinci_debug`)
+  (adds `loglevel=7 ignore_loglevel earlycon keep_bootcon efi=debug
+  drm.debug=0x1e initcall_debug davinci_debug`)
+- `... debug nokaslr` — debug combo + `nokaslr` (rules out KASLR
+  placement crashes before `console_init`)
+- `... debug novamap` — debug combo + `efi=novamap` (rules out a fault in
+  the arm64 EFI runtime mapping, also before `console_init`)
 
 `davinci_debug` makes the `davinci_nested` initramfs hook trace hosting
 partition lookup + offset-loop setup (`ls`, `blkid`) to serial/fbcon/pstore.

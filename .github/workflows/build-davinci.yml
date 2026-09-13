@@ -328,9 +328,29 @@ jobs:
           mkinitcpio -P
           test -f /boot/EFI/Linux/arch-linux-davinci.efi
           test -f /boot/EFI/Linux/arch-linux-davinci-debug.efi
+          test -f /boot/EFI/Linux/arch-linux-davinci-debug-nokaslr.efi
+          test -f /boot/EFI/Linux/arch-linux-davinci-debug-novamap.efi
           test -f /boot/EFI/BOOT/bootaa64.efi
           ls -l /boot/EFI/ /boot/EFI/Linux/ /boot/loader/entries/ || true
           EOF
+
+      - name: Inspect UKIs (boot forensics without flashing)
+        run: |
+          # Proves what the kernel stub actually received: section sizes,
+          # the baked .cmdline (UUIDs filled? efi=debug/davinci_debug?),
+          # and that .dtb is the Samsung DTB with earlycon bootargs.
+          # Catches empty-cmdline / wrong-DTB image bugs offline.
+          sudo apt-get install -y device-tree-compiler
+          for uki in ./mountpoint/boot/EFI/Linux/arch-linux-davinci*.efi; do
+            echo "===== $uki ====="
+            sudo objdump -h "$uki" | grep -E '\.(linux|initrd|cmdline|dtb|osrel|uname)'
+            echo "--- .cmdline ---"
+            sudo objcopy -O binary --only-section=.cmdline "$uki" /tmp/uki-cmdline.bin
+            tr '\0' '\n' < /tmp/uki-cmdline.bin
+            echo "--- .dtb identity ---"
+            sudo objcopy -O binary --only-section=.dtb "$uki" /tmp/uki-dtb.dtb
+            fdtdump /tmp/uki-dtb.dtb | grep -E 'model|compatible|bootargs|stdout-path' | head -n 12
+          done
 
       - name: Create user, clean cache
         run: |

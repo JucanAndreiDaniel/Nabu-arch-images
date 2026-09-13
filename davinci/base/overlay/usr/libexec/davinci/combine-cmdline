@@ -6,10 +6,15 @@
 # console=... / debug flags would be silently dropped.
 #
 # Layout:
-#   combined-default.conf = root.conf + davinci.conf (verbose bring-up,
-#                           no quiet until first successful boot)
-#   combined-debug.conf   = root.conf + davinci.conf + debug.conf
-#                           (ignore_loglevel, drm.debug, davinci_debug hook)
+#   combined-default.conf       = root.conf + davinci.conf (verbose bring-up,
+#                                 no quiet until first successful boot)
+#   combined-debug.conf         = root.conf + davinci.conf + debug.conf
+#                                 (ignore_loglevel, drm.debug, davinci_debug hook)
+#   combined-debug-nokaslr.conf = debug combo + nokaslr (rules out KASLR
+#                                 placement crashes before console_init)
+#   combined-debug-novamap.conf = debug combo + novamap (rules out a fault in
+#                                 the arm64 EFI runtime mapping, also before
+#                                 console_init)
 #
 # Re-run after ANY fragment edit (notably after CI fills the UUID
 # placeholders in root.conf): overlay-post-apply, uki-regenerate and the CI
@@ -18,7 +23,7 @@ set -euo pipefail
 
 cd /etc/cmdline.d
 
-for f in root.conf davinci.conf debug.conf; do
+for f in root.conf davinci.conf debug.conf nokaslr.conf novamap.conf; do
   [ -f "$f" ] || { echo "combine-cmdline: missing $f" >&2; exit 1; }
 done
 
@@ -26,6 +31,10 @@ done
 # line; raw cat would leave embedded newlines).
 paste -sd' ' root.conf davinci.conf > combined-default.conf
 paste -sd' ' root.conf davinci.conf debug.conf > combined-debug.conf
+paste -sd' ' root.conf davinci.conf debug.conf nokaslr.conf > combined-debug-nokaslr.conf
+paste -sd' ' root.conf davinci.conf debug.conf novamap.conf > combined-debug-novamap.conf
 
-echo "combine-cmdline: default: $(cat combined-default.conf)"
-echo "combine-cmdline: debug:   $(cat combined-debug.conf)"
+echo "combine-cmdline: default:       $(cat combined-default.conf)"
+echo "combine-cmdline: debug:         $(cat combined-debug.conf)"
+echo "combine-cmdline: debug-nokaslr: $(cat combined-debug-nokaslr.conf)"
+echo "combine-cmdline: debug-novamap: $(cat combined-debug-novamap.conf)"
