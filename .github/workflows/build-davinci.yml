@@ -1,16 +1,12 @@
 name: Build davinci
 
 # No external [davinci] pacman repo exists yet, so this workflow builds the
-# device packages itself (native aarch64, archlinux container) and installs
-# them into the rootfs with `pacman -U`.
-#
-# Artifacts: images/boot-davinci-samsung.img (pinned prebuilt U-Boot) +
-# images/rootfs-davinci-samsung.img (Arch + systemd-boot + UKI).
-
-# No external [davinci] pacman repo exists yet, so this workflow builds the
 # device packages itself (native aarch64, ArchLinuxARM chroot via
 # arch-install-scripts) and installs them into the rootfs with `pacman -U`.
 # (Docker Hub's archlinux image is x86_64-only, so no container shortcut.)
+#
+# Speedups: the kernel package is skipped when its packaging inputs are
+# unchanged (actions/cache), and kernel rebuilds use a persisted ccache.
 #
 # Artifacts: images/boot-davinci-samsung.img (pinned prebuilt U-Boot) +
 # images/rootfs-davinci-samsung.img (Arch + systemd-boot + UKI).
@@ -34,6 +30,22 @@ jobs:
         with:
           path: repo
           ref: ${{ github.ref_name }}
+
+      - name: Restore kernel package cache
+        id: kernel-cache
+        uses: actions/cache@v6
+        with:
+          # Exact match only: a stale kernel build must never be reused.
+          path: pkgs/linux-davinci*.pkg.tar.*
+          key: davinci-kernel-${{ hashFiles('repo/davinci/packaging/linux-davinci/**') }}
+
+      - name: Restore compiler cache
+        uses: actions/cache@v6
+        with:
+          path: ccache
+          key: davinci-ccache-${{ hashFiles('repo/davinci/packaging/linux-davinci/**') }}
+          restore-keys: |
+            davinci-ccache-
 
       - name: Download generic rootfs tarball
         run: |
@@ -65,30 +77,43 @@ jobs:
           Server = http://nj.us.mirror.archlinuxarm.org/$arch/$repo
           EOM
           pacman -Sy --noconfirm
-          pacman -S --noconfirm base-devel sudo curl git
+          pacman -S --noconfirm base-devel sudo curl git ccache
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          mkdir -p /home/builder/.cache/ccache
           EOF
 
       - name: Build packages in chroot
+        env:
+          SKIP_KERNEL: ${{ steps.kernel-cache.outputs.cache-hit == 'true' && '1' || '' }}
         run: |
+          mkdir -p pkgs ccache
+          sudo mkdir -p ./pkgroot/out ./pkgroot/home/builder/.cache/ccache
+          sudo mount --bind ./pkgs ./pkgroot/out
+          sudo mount --bind ./ccache ./pkgroot/home/builder/.cache/ccache
           for pkg in linux-firmware-xiaomi-davinci linux-davinci; do
+            if [ -n "$SKIP_KERNEL" ] && [ "$pkg" = "linux-davinci" ]; then
+              echo "Kernel packaging inputs unchanged, reusing cached package:"
+              ls -l ./pkgs/
+              continue
+            fi
             sudo rm -rf ./pkgroot/build
             sudo mkdir -p ./pkgroot/build
             sudo cp -r ./repo/davinci/packaging/$pkg/* ./pkgroot/build/
             sudo arch-chroot ./pkgroot bash - <<EOF
           set -e
-          export MAKEFLAGS="-j\$(nproc)"
-          chown -R builder:builder /build
+          chown -R builder:builder /build /home/builder/.cache/ccache
           cd /build
-          runuser -u builder -- makepkg -s --noconfirm --needed
-          mkdir -p /out
+          runuser -u builder -- env MAKEFLAGS="-j\$(nproc)" \
+            CCACHE_DIR=/home/builder/.cache/ccache CCACHE_MAXSIZE=4G \
+            PATH=/usr/lib/ccache/bin:/usr/local/sbin:/usr/local/bin:/usr/bin \
+            makepkg -s --noconfirm --needed
           cp /build/*.pkg.tar.* /out/
+          runuser -u builder -- env CCACHE_DIR=/home/builder/.cache/ccache ccache -s || true
           EOF
           done
-          sudo chown -R $USER:$USER ./pkgroot/out
-          mkdir -p pkgs
-          cp ./pkgroot/out/*.pkg.tar.* ./pkgs/
+          sudo umount ./pkgroot/out ./pkgroot/home/builder/.cache/ccache
+          sudo chown -R $USER:$USER ./pkgs ./ccache
           ls -l ./pkgs/
 
       - name: Upload packages artifact
@@ -133,7 +158,11 @@ jobs:
       - name: Create and mount image
         run: |
           truncate -s 20G ./rootfs-davinci-samsung.img
-          mkfs.ext4 ./rootfs-davinci-samsung.img
+          # NOTE: U-Boot's ext4 driver cannot read newer metadata features, so
+          # keep the rootfs conservative — U-Boot's bootmgr must iterate /EFI
+          # on this partition ("Failed to iterate over directory EFI"
+          # otherwise). 4K blocks match the UFS sector size.
+          mkfs.ext4 -b 4096 -O ^metadata_csum_seed,^orphan_file,^fast_commit,^casefold,^verity,^encrypt ./rootfs-davinci-samsung.img
           mkdir mountpoint
           sudo mount -o loop ./rootfs-davinci-samsung.img ./mountpoint/
           sudo mkdir -p ./mountpoint/boot
