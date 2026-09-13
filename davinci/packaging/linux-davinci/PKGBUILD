@@ -50,6 +50,9 @@ package_linux-davinci() {
 package_linux-davinci-headers() {
   pkgdesc="Headers for linux-davinci"
   depends=('linux-davinci')
+  provides=('linux-api-headers')
+  conflicts=('linux-api-headers')
+  replaces=('linux-api-headers')
   cd "linux-${_commit}"
   make INSTALL_HDR_PATH="$pkgdir/usr" headers_install
 }

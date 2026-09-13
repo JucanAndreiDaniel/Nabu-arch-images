@@ -216,6 +216,9 @@ jobs:
             if [ $n -ge 3 ]; then exit 1; fi
             sleep 5
           done
+          # linux-davinci-headers replaces linux-api-headers (same pattern as
+          # the official linux-aarch64-headers package).
+          pacman -Rdd --noconfirm linux-api-headers || true
           # Device packages built by the build-davinci-pkgs job
           # (linux-davinci + linux-davinci-headers split packages).
           pacman -U --noconfirm /root/davinci-pkgs/linux-davinci*.pkg.tar.*
