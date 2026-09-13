@@ -1,11 +1,15 @@
 # Maintainer: arch-xiaomi-davinci
 # Arch kernel for Xiaomi Mi 9T / Redmi K20 (davinci, Samsung panel).
-# Upstream: https://github.com/sm7150-mainline/linux (branch v7.2)
+# Upstream: https://github.com/sm7150-mainline/linux, tag v7.1_rc3
+# (pinned to the EXACT code pmOS boots: linux-postmarketos-qcom-sm7150
+# 7.1_rc3; v7.2-tip kernels hang after the EFI stub on this device).
 # DTB: arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dts
 #
-# This PKGBUILD builds the fork kernel with the Samsung DTB and installs
-# modules + DTBs + Image.
-# IMPORTANT: pkgver MUST equal `make kernelversion` of the pinned _commit
+# Config is the working pmOS 7.1.0-sm7150 /boot/config verbatim
+# (config-pmos-7.1_rc3), NOT defconfig+sm7150.config+efi.config+davinci.config:
+# the fragment-merge approach produced a kernel that dies before
+# console_init. Revisit newer trees/fragments only after first boot.
+# IMPORTANT: pkgver MUST equal `make kernelversion` of the pinned tag
 # (branch names like v7.2 do not match the tree version; v7.2 tip builds
 # 7.1.0). The overlay/UKI tooling addresses /boot/vmlinuz-${pkgver} and
 # /boot/dtb-${pkgver}. Bump pkgver/pkgrel on EVERY build so the UKI hook
@@ -13,32 +17,24 @@
 
 pkgname=('linux-davinci' 'linux-davinci-headers')
 pkgver=7.1.0
-pkgrel=1
+pkgrel=2
 arch=('aarch64')
 license=('GPL-2.0-only')
 url="https://github.com/sm7150-mainline/linux"
-_commit="fd78d17954a86ea6ceb0c535e618ea129e09f8dd"  # v7.2 tip at time of writing; pin per build
-source=("linux-sm7150-${_commit}.tar.gz::https://github.com/sm7150-mainline/linux/archive/${_commit}.tar.gz")
-sha256sums=('SKIP')  # pin after first verified build
+_tag="v7.1_rc3"  # exact pmOS code; re-pin deliberately, never float
+_sdir="linux-7.1_rc3"  # GitHub strips the leading v in tarball dirnames
+source=("linux-sm7150-${_tag}.tar.gz::https://github.com/sm7150-mainline/linux/archive/${_tag}.tar.gz"
+        "config-pmos-7.1_rc3")
+sha256sums=('SKIP'  # pin after first verified build
+            'SKIP')  # local file: working pmOS /boot/config
 makedepends=('bc' 'cpio' 'gettext' 'libelf' 'pahole' 'perl' 'python' 'tar' 'xz' 'gcc' 'make' 'rsync')
 options=('!strip')
 
 prepare() {
-  cd "linux-${_commit}"
-  # Base config exactly like the pocketblue kernel package: upstream
-  # defconfig merged with the in-tree sm7150.config + efi.config
-  # fragments (-m = merge only, no make step; olddefconfig follows).
-  ./scripts/kconfig/merge_config.sh -m arch/arm64/configs/defconfig \
-    arch/arm64/configs/sm7150.config arch/arm64/configs/efi.config
-  # Davinci extras/corrections on top (scripts/config fails on unknown
-  # symbols, so this also validates davinci.config).
-  while IFS= read -r line; do
-    case "$line" in
-      CONFIG_*=y) ./scripts/config --enable "${line%%=*}" ;;
-      CONFIG_*=m) ./scripts/config --module "${line%%=*}" ;;
-      CONFIG_*=n) ./scripts/config --disable "${line%%=*}" ;;
-    esac
-  done < "$startdir/davinci.config"
+  cd "${_sdir}"
+  # Working pmOS config verbatim; olddefconfig only normalizes against the
+  # (identical) tree. No fragment merging, no extra toggles.
+  cp "$startdir/config-pmos-7.1_rc3" .config
   make olddefconfig
   # Verify the davinci-relevant effective config. Merge order is defconfig +
   # sm7150.config + efi.config (merge_config.sh -m) with davinci.config
@@ -88,7 +84,7 @@ prepare() {
 }
 
 build() {
-  cd "linux-${_commit}"
+  cd "${_sdir}"
   make -j"$(nproc)" Image.gz modules
   make -j"$(nproc)" DTC_FLAGS="-@" qcom/sm7150-xiaomi-davinci-samsung.dtb
 }
@@ -97,10 +93,10 @@ package_linux-davinci() {
   pkgdesc="Mainline kernel fork for Xiaomi davinci (Samsung panel)"
   depends=('coreutils' 'kmod' 'mkinitcpio')
   provides=("linux=${pkgver}")
-  cd "linux-${_commit}"
+  cd "${_sdir}"
   make INSTALL_MOD_PATH="$pkgdir/usr" modules_install
   # Install paths must use the real kernel release (VERSION + EXTRAVERSION
-  # + CONFIG_LOCALVERSION, e.g. 7.1.0-sm7150 from sm7150.config), not
+  # + CONFIG_LOCALVERSION, e.g. 7.1.0-sm7150), not
   # $pkgver — overlay-post-apply/uki-regenerate address /boot/vmlinuz
   # and /boot/dtb by the modules-dir name.
   _kver=$(cat include/config/kernel.release)
@@ -121,6 +117,6 @@ package_linux-davinci-headers() {
   provides=('linux-api-headers')
   conflicts=('linux-api-headers')
   replaces=('linux-api-headers')
-  cd "linux-${_commit}"
+  cd "${_sdir}"
   make INSTALL_HDR_PATH="$pkgdir/usr" headers_install
 }

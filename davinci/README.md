@@ -4,7 +4,11 @@ Samsung-panel only for v1. Single-boot. U-Boot + systemd-boot.
 
 ## Sources (pinned)
 
-- Kernel: `https://github.com/sm7150-mainline/linux`, branch `v7.2`
+- Kernel: `https://github.com/sm7150-mainline/linux`, tag `v7.1_rc3`
+  (exact code pmOS boots as `linux-postmarketos-qcom-sm7150` 7.1_rc3;
+  config = pmOS working `/boot/config` verbatim, see
+  `packaging/linux-davinci/config-pmos-7.1_rc3`. v7.2-tip was tried and
+  hangs after the EFI stub; revisit newer trees only after first boot)
   - DTB: `arch/arm64/boot/dts/qcom/sm7150-xiaomi-davinci-samsung.dts`
     (`compatible = "xiaomi,davinci-samsung"`, panel `samsung,ams639rq08`)
 - U-Boot (prebuilt, do not build for v1):
