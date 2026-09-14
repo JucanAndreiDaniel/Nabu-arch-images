@@ -26,5 +26,21 @@ echo "===== power supplies ====="
 cat /sys/class/power_supply/*/capacity /sys/class/power_supply/*/status 2>&1
 echo "===== thermal zones ====="
 cat /sys/class/thermal/thermal_zone*/temp 2>&1 || echo "(no thermal zones)"
+echo "===== kernel identity ====="
+uname -a 2>&1
+echo "===== filesystems: configfs registered? ====="
+grep -iE "configfs" /proc/filesystems 2>&1 || echo "(configfs NOT in /proc/filesystems)"
+echo "===== usb gadget state ====="
+ls /sys/class/udc 2>&1
+ls /dev/ttyGS* 2>&1
+ls /lib/modules/"$(uname -r)"/kernel/drivers/usb/gadget/ 2>&1
+ls /lib/modules/"$(uname -r)"/kernel/drivers/usb/gadget/function/ 2>&1
+ls /lib/modules/"$(uname -r)"/kernel/drivers/usb/gadget/legacy/ 2>&1
+echo "===== mount+gadget units (this boot) ====="
+systemctl status sys-kernel-config.mount --no-pager --no-hostname 2>&1 | tail -12
+journalctl -b -0 -u sys-kernel-config.mount --no-pager --no-hostname 2>&1 | tail -8
+systemctl status davinci-net-gadget.service --no-pager --no-hostname 2>&1 | tail -8
+echo "===== dmesg usb/configfs ====="
+dmesg 2>&1 | grep -iE "configfs|gadget|udc |dwc3|g_serial|composite|ecm|acm|ttyGS" | tail -25
 echo "===== forensics done ====="
 } 2>&1 | tee /dev/ttyGS0 /dev/tty0 > /dev/null 2>&1 || true
