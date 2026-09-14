@@ -43,4 +43,9 @@ systemctl status davinci-net-gadget.service --no-pager --no-hostname 2>&1 | tail
 echo "===== dmesg usb/configfs ====="
 dmesg 2>&1 | grep -iE "configfs|gadget|udc |dwc3|g_serial|composite|ecm|acm|ttyGS" | tail -25
 echo "===== forensics done ====="
-} 2>&1 | tee /dev/ttyGS0 /dev/tty0 > /dev/null 2>&1 || true
+# Tee everything to a persistent log too: read it (or the full journal)
+# later via UMS, no serial-scraping needed:
+#   mount rootfs, cat /mnt/davinci-root/var/log/davinci-forensics.log
+#   journalctl --directory=/mnt/davinci-root/var/log/journal -b -1 -e
+} 2>&1 | tee /var/log/davinci-forensics.log /dev/ttyGS0 /dev/tty0 > /dev/null 2>&1 || true
+sync 2>/dev/null || true
