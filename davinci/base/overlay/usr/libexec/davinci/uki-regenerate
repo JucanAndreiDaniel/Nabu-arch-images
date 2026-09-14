@@ -14,7 +14,7 @@ echo "Regenerating UKI for kernel ${kernver}..."
 
 if [ ! -f /etc/cmdline.d/root.conf ]; then
     mkdir -p /etc/cmdline.d
-    printf 'root=PARTLABEL=userdata rw\n' > /etc/cmdline.d/root.conf
+    printf 'root=PARTLABEL=ARCH rw rootwait\n' > /etc/cmdline.d/root.conf
 fi
 
 cat > /etc/mkinitcpio.d/linux-davinci.preset << PRESET
@@ -44,6 +44,13 @@ fi
 
 # /boot lives on the rootfs for davinci v1 (no separate ESP partition).
 mkdir -p /boot/EFI/Linux
+# Preserve the previous default UKI (upstream nabu pattern) so a bad
+# on-device kernel upgrade stays recoverable from the boot menu via the
+# arch-davinci-old entry. No-op on fresh installs.
+if [ -f /boot/EFI/Linux/arch-linux-davinci.efi ]; then
+    cp -f /boot/EFI/Linux/arch-linux-davinci.efi /boot/EFI/Linux/arch-linux-davinci-old.efi
+    echo "Preserved previous UKI as arch-linux-davinci-old.efi"
+fi
 mkinitcpio -P
 
 echo "UKI regeneration complete for kernel ${kernver}"
