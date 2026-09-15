@@ -293,6 +293,12 @@ jobs:
           # split name is missing on the mirror; ours never overlaps
           # upstream paths, so no conflicts either way.
           pacman -U --noconfirm /root/davinci-pkgs/linux-firmware-xiaomi-davinci-*.pkg.tar.*
+          # hexagonrpcd (FastRPC/SSC daemon for sensors) has no Arch
+          # package: built by the build-davinci-pkgs job from
+          # davinci/packaging/hexagonrpcd (glibc port of
+          # linux-msm/hexagonrpc, device-tested). Installs before the
+          # /root/davinci-pkgs cleanup below.
+          pacman -U --noconfirm /root/davinci-pkgs/hexagonrpcd-*.pkg.tar.*
           if ! pacman -S --noconfirm linux-firmware-qcom linux-firmware-atheros wireless-regdb; then
             echo "firmware splits unavailable, installing full linux-firmware"
             pacman -S --noconfirm linux-firmware wireless-regdb
@@ -301,11 +307,6 @@ jobs:
           # NOTE: no separate systemd-boot package on Arch — bootctl ships
           # with systemd.
           pacman -S --noconfirm ukify systemd
-          # hexagonrpcd (FastRPC/SSC daemon for sensors) has no Arch
-          # package: built by the build-davinci-pkgs job from
-          # davinci/packaging/hexagonrpcd (glibc port of
-          # linux-msm/hexagonrpc, device-tested).
-          pacman -U --noconfirm /root/davinci-pkgs/hexagonrpcd-*.pkg.tar.*
           # No pacman rmtfs/pd-mapper/tqftpserv on Arch: the daemons are
           # vendored glibc builds in davinci/base/overlay/usr/bin with
           # their units (qcom QRTR/TZ services; without tqftpserv the
