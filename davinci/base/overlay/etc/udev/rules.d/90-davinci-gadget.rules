@@ -1,3 +1,0 @@
-# Re-run the composite-gadget setup whenever a UDC appears (cable plugged
-# after boot, controller reprobe): the service itself is idempotent.
-ACTION=="add", SUBSYSTEM=="udc", TAG+="systemd", ENV{SYSTEMD_WANTS}+="davinci-net-gadget.service"

@@ -1,21 +1,18 @@
 #!/bin/sh
 # davinci-forensics: headless flight recorder.
 #
-# The USB serial is output-only from some hosts, so scream the diagnostics
-# at every console on each boot instead of waiting for a login that may
-# never come. Safe to run always: best-effort throughout, can never fail
-# the boot. First boot after flashing has no predecessor (empty section);
-# the second boot prints the first boot's death.
+# Scream the diagnostics at every console on each boot instead of waiting
+# for a login that may never come. Safe to run always: best-effort
+# throughout, can never fail the boot. First boot after flashing has no
+# predecessor (empty section); the second boot prints the first boot's
+# death.
 {
 echo "===== davinci-forensics: previous boot tail (-b -1) ====="
-journalctl -b -1 -e --no-pager --no-hostname 2>&1 | tail -50
+journalctl -b -1 -e --no-pager 2>&1 | tail -50
 echo "===== previous boot: logind ====="
-journalctl -b -1 -u systemd-logind --no-pager --no-hostname 2>&1 | tail -20
-echo "===== net-gadget status (this boot + previous) ====="
-systemctl status davinci-net-gadget.service --no-pager --no-hostname 2>&1 | tail -12
-journalctl -b -1 -u davinci-net-gadget --no-pager --no-hostname 2>&1 | tail -10
+journalctl -b -1 -u systemd-logind --no-pager 2>&1 | tail -20
 echo "===== previous boot: power/reboot/fail lines ====="
-journalctl -b -1 --no-pager --no-hostname 2>&1 | grep -iE "power key|powering|reboot|shut|thermal|watchdog|failed|failure" | tail -25
+journalctl -b -1 --no-pager 2>&1 | grep -iE "power key|powering|reboot|shut|thermal|watchdog|failed|failure" | tail -25
 echo "===== wtmp runlevel history ====="
 last -x -n 8 2>&1
 echo "===== this boot: failed units ====="
@@ -30,22 +27,47 @@ echo "===== kernel identity ====="
 uname -a 2>&1
 echo "===== filesystems: configfs registered? ====="
 grep -iE "configfs" /proc/filesystems 2>&1 || echo "(configfs NOT in /proc/filesystems)"
-echo "===== usb gadget state ====="
+echo "===== usb state (no USB serial configured) ====="
 ls /sys/class/udc 2>&1
-ls /dev/ttyGS* 2>&1
-ls /lib/modules/"$(uname -r)"/kernel/drivers/usb/gadget/ 2>&1
-ls /lib/modules/"$(uname -r)"/kernel/drivers/usb/gadget/function/ 2>&1
-ls /lib/modules/"$(uname -r)"/kernel/drivers/usb/gadget/legacy/ 2>&1
-echo "===== mount+gadget units (this boot) ====="
-systemctl status sys-kernel-config.mount --no-pager --no-hostname 2>&1 | tail -12
-journalctl -b -0 -u sys-kernel-config.mount --no-pager --no-hostname 2>&1 | tail -8
-systemctl status davinci-net-gadget.service --no-pager --no-hostname 2>&1 | tail -8
-echo "===== dmesg usb/configfs ====="
-dmesg 2>&1 | grep -iE "configfs|gadget|udc |dwc3|g_serial|composite|ecm|acm|ttyGS" | tail -25
+echo "===== net link state ====="
+ip -br link 2>&1
+echo "===== NetworkManager devices + profiles ====="
+nmcli device status 2>&1
+nmcli connection show 2>&1
+ls -l /etc/NetworkManager/system-connections/ 2>&1
+echo "===== NetworkManager journal (this boot) ====="
+journalctl -b -0 -u NetworkManager --no-pager 2>&1 | tail -30
+echo "===== dwc3/udc dmesg ====="
+dmesg 2>&1 | grep -iE "dwc3|a600000|udc" | tail -30
+echo "===== dmesg usb ====="
+dmesg 2>&1 | grep -iE "usb|udc |dwc3" | tail -25
+echo "===== sddm autologin config + sessions ====="
+cat /etc/sddm.conf.d/autologin.conf 2>&1
+ls /usr/share/wayland-sessions/ 2>&1
+loginctl --no-pager 2>&1
+echo "===== sddm journal (this boot) ====="
+journalctl -b -0 -u sddm --no-pager 2>&1 | tail -30
+echo "===== session errors (this boot) ====="
+journalctl -b -0 --no-pager 2>&1 | grep -iE "Autologging|startplasma|kwin_wayland.*(failed|error|crash)|plasmashell.*(failed|crash)" | tail -20
+echo "===== pstore: previous boot's ramoops console (panic capture) ====="
+# A hard reset never flushes the journal, but ramoops survives it: if the
+# last boot died in a panic, its console is here.
+for f in /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-0; do
+  if [ -r "$f" ]; then
+    echo "--- $f ---"
+    tail -c 30000 "$f" 2>&1
+  fi
+done
+echo "(no ramoops files above = previous boot left no panic trace)"
 echo "===== forensics done ====="
 # Tee everything to a persistent log too: read it (or the full journal)
 # later via UMS, no serial-scraping needed:
 #   mount rootfs, cat /mnt/davinci-root/var/log/davinci-forensics.log
 #   journalctl --directory=/mnt/davinci-root/var/log/journal -b -1 -e
-} 2>&1 | tee /var/log/davinci-forensics.log /dev/ttyGS0 /dev/tty0 > /dev/null 2>&1 || true
+#
+# Write a copy to /dev/tty0 only — there is no USB serial anymore
+# (retired, see SERIAL-BRIEF §18). Kernel printk still reaches the panel
+# via console=tty0; the full dump lives in the persistent log above.
+TTY_TARGETS="/dev/tty0"
+} 2>&1 | tee /var/log/davinci-forensics.log $TTY_TARGETS > /dev/null 2>&1 || true
 sync 2>/dev/null || true

@@ -1,0 +1,168 @@
+name: Apply davinci overlay
+
+# Layers a desktop flavor on top of a minimal base image built by
+# build-davinci.yml: installs the flavor's package set into the mounted
+# rootfs, copies repo/<overlay>/overlay/, runs its post-apply, and
+# re-packs. No base rebuild needed.
+#
+# Package sets are duplicated here (not referenced) so each workflow stays
+# self-contained; keep in sync with:
+# - plasma: the former "Install Plasma Desktop" set (nabu Plasma parity)
+# - plasma-mobile: davinci-local/scripts/build-image-local.sh
+#   (pmOS postmarketOS-ui-plasma-mobile cross-check + phone app set)
+
+on:
+  workflow_dispatch:
+    inputs:
+      overlay:
+        description: "Desktop flavor overlay to apply"
+        required: true
+        default: plasma-mobile
+        type: choice
+        options:
+          - plasma-mobile
+          - plasma
+      base_run_id:
+        description: "build-davinci run id to take the base image from (empty = latest successful run)"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  apply-overlay:
+    name: Apply ${{ inputs.overlay }} overlay
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Update apt cache
+        run: sudo apt-get update
+
+      - name: Install tools
+        run: sudo apt-get install -y git arch-install-scripts e2fsprogs dosfstools parted curl
+
+      - name: Install sparse-image tools (best effort)
+        run: sudo apt-get install -y android-sdk-libsparse-utils || echo "img2simg/simg2img unavailable, will ship a raw image"
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          path: repo
+          ref: ${{ github.ref_name }}
+
+      - name: Resolve base run id
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${{ inputs.base_run_id }}" ]; then
+            echo "run_id=${{ inputs.base_run_id }}" >> $GITHUB_OUTPUT
+          else
+            RID=$(gh run list --repo ${{ github.repository }} --workflow=build-davinci.yml --status=success --limit=1 --json databaseId -q '.[0].databaseId')
+            [ -n "$RID" ] || { echo "ERROR: no successful build-davinci run found" >&2; exit 1; }
+            echo "run_id=$RID" >> $GITHUB_OUTPUT
+          fi
+          echo "Using base run: $(cat $GITHUB_OUTPUT | grep run_id)"
+
+      - name: Download base image artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p base
+          gh run download ${{ steps.base.outputs.run_id }} --repo ${{ github.repository }} -n arch-davinci-base -D ./base
+          ls -l ./base/images/
+
+      - name: Attach base image
+        run: |
+          IMG=./base/images/userdata-nested.img
+          if command -v simg2img >/dev/null && file "$IMG" | grep -qi sparse; then
+            echo "sparse image detected, expanding..."
+            simg2img "$IMG" ./userdata-nested.raw
+            IMG=./userdata-nested.raw
+          fi
+          echo "IMG=$IMG" >> $GITHUB_ENV
+          LOOP=$(sudo losetup --sector-size 4096 -P --show -f "$IMG")
+          echo "NESTED_LOOP=$LOOP" >> $GITHUB_ENV
+          sudo parted -s $LOOP unit s print
+          mkdir -p mountpoint
+          sudo mount ${LOOP}p2 ./mountpoint/
+          sudo mkdir -p ./mountpoint/boot
+          sudo mount ${LOOP}p1 ./mountpoint/boot
+          df -h ./mountpoint | tail -n 1
+
+      - name: Install flavor packages
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          set -e
+          n=0
+          until pacman -Sy --noconfirm; do
+            n=$((n+1))
+            if [ $n -ge 3 ]; then exit 1; fi
+            sleep 5
+          done
+          EOF
+          if [ "${{ inputs.overlay }}" = "plasma-mobile" ]; then
+            sudo arch-chroot ./mountpoint pacman -S --noconfirm plasma-mobile sddm breeze qt6-wayland noto-fonts noto-fonts-emoji plasma-keyboard qmlkonsole kscreen vulkan-freedreno plasma-settings angelfish kalk kweather koko keysmith kclock arianna neochat tokodon callaudiod feedbackd modemmanager libqrtr-glib iio-sensor-proxy geoclue iwd udisks2 upower alsa-ucm-conf pipewire pipewire-pulse pipewire-alsa wireplumber discover packagekit flatpak xdg-desktop-portal-gtk bluedevil index-fm calindori geary haruna maui-nota vvave alsa-utils
+          else
+            sudo arch-chroot ./mountpoint pacman -S --noconfirm upower bluedevil breeze breeze-gtk breeze-plymouth discover drkonqi kactivitymanagerd kde-cli-tools kde-gtk-config kdecoration kdeplasma-addons kgamma kglobalacceld kinfocenter kmenuedit kpipewire kscreen kscreenlocker ksshaskpass ksystemstats kwallet-pam kwayland kwin layer-shell-qt libkscreen libksysguard libplasma milou ocean-sound-theme plasma-activities plasma-activities-stats plasma-browser-integration plasma-desktop plasma-integration plasma-nm plasma-pa plasma-systemmonitor plasma-vault plasma-workspace plasma5support polkit-kde-agent powerdevil print-manager qqc2-breeze-style sddm-kcm spectacle systemsettings xdg-desktop-portal-kde pipewire pipewire-pulse pipewire-jack noto-fonts plasma-keyboard gwenview konsole dolphin qt6-multimedia-ffmpeg vulkan-freedreno flatpak packagekit xdg-desktop-portal-gtk
+          fi
+
+      - name: Apply overlay
+        run: |
+          sudo cp ./repo/${{ inputs.overlay }}/overlay/* -r ./mountpoint/
+          if [ "${{ inputs.overlay }}" = "plasma" ]; then
+            # nabu geometry files are nabu 1600x2560 rotated: KWin must
+            # auto-configure the davinci 1080x2340 panel natively.
+            sudo rm -f ./mountpoint/etc/skel/.config/kwinoutputconfig.json ./mountpoint/var/lib/sddm/.config/kwinoutputconfig.json
+          fi
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          chmod +x /overlay-post-apply
+          /overlay-post-apply
+          rm /overlay-post-apply
+          EOF
+
+      - name: Enable sddm and configure auto-login
+        run: |
+          # plasma-mobile's post-apply already enables sddm with its own
+          # autologin (Session=plasma-mobile); desktop needs it here.
+          if [ "${{ inputs.overlay }}" = "plasma" ]; then
+            sudo arch-chroot ./mountpoint bash - <<'EOF'
+          systemctl enable sddm
+          cat > /etc/sddm.conf.d/autologin.conf << 'EOL'
+          [Autologin]
+          User=user
+          Session=plasma
+          EOL
+          EOF
+          fi
+
+      - name: Add Flathub remote for Discover
+        run: |
+          sudo arch-chroot ./mountpoint flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || \
+            echo "WARNING: flathub remote-add failed (offline build?), Discover will show add-ons only"
+
+      - name: Clean cache, unmount, repack
+        run: |
+          sudo arch-chroot ./mountpoint bash - <<'EOF'
+          yes | pacman -Scc || true
+          EOF
+          sudo umount -R ./mountpoint
+          rmdir ./mountpoint
+          sudo e2fsck -f ${NESTED_LOOP}p2 -y || true
+          sudo losetup -d $NESTED_LOOP
+          mkdir -p ./images
+          if command -v img2simg >/dev/null; then
+            img2simg ./userdata-nested.raw ./images/userdata-nested-${{ inputs.overlay }}.img
+            rm -f ./userdata-nested.raw
+          else
+            mv ./userdata-nested.raw ./images/userdata-nested-${{ inputs.overlay }}.img
+          fi
+          sha256sum ./images/* > ./images/SHA256SUMS
+          cat ./images/SHA256SUMS
+          ls -l ./images/
+
+      - name: Upload flavored image artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: arch-davinci-${{ inputs.overlay }}
+          path: images
+          retention-days: 90
+          compression-level: 5

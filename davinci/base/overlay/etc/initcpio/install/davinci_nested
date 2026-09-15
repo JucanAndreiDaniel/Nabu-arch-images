@@ -10,7 +10,7 @@ build() {
 help() {
     cat <<HELPEOF
 Expose the nested davinci partitions (FAT ESP + ext4 root living
-inside the userdata/linux hosting partition) as offset loop devices
-so root=UUID= can mount.
+inside the userdata/linux hosting partition) as partitioned loop devices
+so root=PARTLABEL=ARCH can mount.
 HELPEOF
 }

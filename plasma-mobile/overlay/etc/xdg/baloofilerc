@@ -1,0 +1,11 @@
+# Disable Baloo file indexing fleet-wide on davinci phones.
+#
+# Rationale: first login launches baloo_file, which immediately walks and
+# indexes the whole 50GB+ userdata-backed rootfs (plus firmware trees)
+# while kwin/modem/wifi are also ramping — the single biggest CPU+IO
+# spike in the boot after the compositor starts. On wall-powered phones
+# with a weak battery/charger that combined spike is a brownout/reboot
+# risk. Search-in-Dolphin is not worth a dead session; re-enable per
+# user with `balooctl enable` if ever wanted.
+[Basic Settings]
+Indexing-Enabled=false

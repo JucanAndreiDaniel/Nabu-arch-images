@@ -1,0 +1,55 @@
+# Maintainer: arch-xiaomi-davinci
+# Qualcomm HexagonFS/FastRPC daemon for davinci (sm7150 ADSP/CDSP).
+# Upstream: https://github.com/linux-msm/hexagonrpc
+# pmOS reference package: hexagonrpcd 0.4.0-r3 (musl; this builds glibc).
+# AUR reference: hexagonrpcd (0.3.2-era, sdm670 fork).
+#
+# Why: /dev/fastrpc-adsp exists and ADSP/CDSP remoteprocs boot, but without
+# this daemon nothing serves SSC/sensorspd. iio-sensor-proxy spins at 100%
+# CPU (udev fires ssc-* types on fastrpc-adsp) with zero sensors exposed.
+# Test on device before enabling in the overlay:
+#   makepkg -si && sudo systemctl enable --now hexagonrpcd-adsp-sensorspd
+#   busctl get-property net.hadess.SensorProxy ... HasAccelerometer
+#   (expect true + proxy CPU idle; monitor-sensor shows accel)
+
+pkgname=hexagonrpcd
+pkgver=0.4.0
+pkgrel=1
+arch=('aarch64')
+license=('GPL-3.0-or-later')
+url="https://github.com/linux-msm/hexagonrpc"
+depends=('glibc')
+makedepends=('git' 'meson' 'ninja' 'linux-api-headers')
+_commit="v0.4.0"
+source=(
+  "git+https://github.com/linux-msm/hexagonrpc.git#commit=$_commit"
+  "10-fastrpc.rules"
+  "hexagonrpcd-adsp-rootpd.service"
+  "hexagonrpcd-adsp-sensorspd.service"
+  "hexagonrpcd-sdsp.service"
+)
+sha256sums=(
+  'SKIP'
+  'SKIP'
+  'SKIP'
+  'SKIP'
+  'SKIP'
+)
+
+build() {
+  meson setup hexagonrpc build --prefix=/usr --buildtype=release
+  meson compile -C build
+}
+
+package() {
+  DESTDIR="$pkgdir" meson install --no-rebuild -C build
+
+  # fastrpc user/group for the daemon (pmOS runs User=fastrpc too)
+  printf '%s\n' 'u fastrpc - "Qualcomm HexagonFS service" /var/lib/fastrpc' |
+    install -Dm644 /dev/stdin "$pkgdir/usr/lib/sysusers.d/fastrpc.conf"
+
+  install -Dm644 "$srcdir/10-fastrpc.rules" -t "$pkgdir/usr/lib/udev/rules.d/"
+  install -Dm644 "$srcdir/$pkgname-adsp-rootpd.service" -t "$pkgdir/usr/lib/systemd/system/"
+  install -Dm644 "$srcdir/$pkgname-adsp-sensorspd.service" -t "$pkgdir/usr/lib/systemd/system/"
+  install -Dm644 "$srcdir/$pkgname-sdsp.service" -t "$pkgdir/usr/lib/systemd/system/"
+}

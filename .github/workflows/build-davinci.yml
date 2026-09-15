@@ -91,7 +91,7 @@ jobs:
           sudo mkdir -p ./pkgroot/out ./pkgroot/home/builder/.cache/ccache
           sudo mount --bind ./pkgs ./pkgroot/out
           sudo mount --bind ./ccache ./pkgroot/home/builder/.cache/ccache
-          for pkg in linux-firmware-xiaomi-davinci linux-davinci; do
+          for pkg in linux-firmware-xiaomi-davinci linux-davinci hexagonrpcd; do
             if [ -n "$SKIP_KERNEL" ] && [ "$pkg" = "linux-davinci" ]; then
               echo "Kernel packaging inputs unchanged, reusing cached package:"
               ls -l ./pkgs/
@@ -301,14 +301,36 @@ jobs:
           # NOTE: no separate systemd-boot package on Arch — bootctl ships
           # with systemd.
           pacman -S --noconfirm ukify systemd
-          pacman -S --noconfirm tqftpserv || true
-          pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils zram-generator dosfstools openssh
-          systemctl enable bluetooth NetworkManager
-          # USB serial login (G_SERIAL auto-binds at boot, ACM gadget from
-          # the initramfs hook): headless access without UART or display.
-          systemctl enable serial-getty@ttyGS0.service || true
+          # hexagonrpcd (FastRPC/SSC daemon for sensors) has no Arch
+          # package: built by the build-davinci-pkgs job from
+          # davinci/packaging/hexagonrpcd (glibc port of
+          # linux-msm/hexagonrpc, device-tested).
+          pacman -U --noconfirm /root/davinci-pkgs/hexagonrpcd-*.pkg.tar.*
+          # No pacman rmtfs/pd-mapper/tqftpserv on Arch: the daemons are
+          # vendored glibc builds in davinci/base/overlay/usr/bin with
+          # their units (qcom QRTR/TZ services; without tqftpserv the
+          # WLAN firmware never boots and there is no wlan0).
+          # Prune /usr/lib/firmware to davinci-known hardware (the splits
+          # are already targeted, but the full-linux-firmware fallback
+          # drags in amdgpu/nvidia/i915/... blobs for hardware this
+          # phone will never have).
+          if [ -d /usr/lib/firmware ]; then
+            for e in /usr/lib/firmware/*; do
+              case "$(basename "$e")" in
+                qcom|ath10k|qca|regulatory.db|regulatory.db.p7s) ;;
+                *) rm -rf "$e" ;;
+              esac
+            done
+          fi
+          pacman -S --noconfirm sudo terminus-font networkmanager bluez bluez-utils bluedevil zram-generator dosfstools openssh dnsmasq cloud-guest-utils gptfdisk e2fsprogs rtkit
+          systemctl enable bluetooth NetworkManager rtkit-daemon
+          # No USB serial getty anywhere: no console=ttyGS0 on any
+          # cmdline and G_SERIAL is off, so the generator never spawns
+          # serial-getty@ttyGS0. Device access is panel getty (tty1) +
+          # USB-NCM/WiFi SSH + UMS pulls.
           systemctl enable systemd-zram-setup@zram0.service || true
-          # SSH over the USB ECM gadget (phone 192.168.42.1, see README).
+          # NCM gadget (davinci-net-usb, pmOS layout) + NetworkManager
+          # shared profile: phone is reachable over USB networking.
           systemctl enable sshd
           echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
           EOF
@@ -317,44 +339,15 @@ jobs:
         run: |
           sudo cp ./repo/davinci/base/overlay/* -r ./mountpoint/
           sudo arch-chroot ./mountpoint bash - <<'EOF'
-          chmod +x /overlay-post-apply /usr/libexec/davinci/uki-regenerate /usr/libexec/davinci/combine-cmdline
+          chmod +x /overlay-post-apply /usr/libexec/davinci/uki-regenerate /usr/libexec/davinci/initrd-fingerprint /usr/libexec/davinci/combine-cmdline /usr/libexec/davinci/net-usb /usr/libexec/davinci/forensics-dump /usr/libexec/davinci/grow-rootfs /usr/libexec/davinci/modem-gnss /usr/libexec/msm-modem-uim-selection
           /overlay-post-apply
           rm /overlay-post-apply
           EOF
 
-      # Plasma proof-of-life GUI (same package set + overlay pattern as the
-      # nabu Plasma image). kwinoutputconfig.json files are nabu geometry
-      # (1600x2560 rotated) and must NOT ship: KWin then auto-configures
-      # the davinci 1080x2340 panel natively. sddm autologs in (no password
-      # typing over broken serial); gettys stay as fallback.
-      - name: Install Plasma Desktop
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          # NOTE: nabu's list uses upower-nncc from their custom repo, which
-          # this workflow deliberately does not add; stock upower works
-          # (powerdevil pulls it anyway).
-          pacman -S --noconfirm upower bluedevil breeze breeze-gtk breeze-plymouth discover drkonqi kactivitymanagerd kde-cli-tools kde-gtk-config kdecoration kdeplasma-addons kgamma kglobalacceld kinfocenter kmenuedit kpipewire kscreen kscreenlocker ksshaskpass ksystemstats kwallet-pam kwayland kwin layer-shell-qt libkscreen libksysguard libplasma milou ocean-sound-theme plasma-activities plasma-activities-stats plasma-browser-integration plasma-desktop plasma-integration plasma-nm plasma-pa plasma-systemmonitor plasma-vault plasma-workspace plasma5support polkit-kde-agent powerdevil print-manager qqc2-breeze-style sddm-kcm spectacle systemsettings xdg-desktop-portal-kde pipewire pipewire-pulse pipewire-jack noto-fonts plasma-keyboard gwenview konsole dolphin qt6-multimedia-ffmpeg vulkan-freedreno flatpak
-          EOF
-
-      - name: Apply Plasma overlay
-        run: |
-          sudo cp ./repo/plasma/overlay/* -r ./mountpoint/
-          sudo rm -f ./mountpoint/etc/skel/.config/kwinoutputconfig.json ./mountpoint/var/lib/sddm/.config/kwinoutputconfig.json
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          /overlay-post-apply
-          rm /overlay-post-apply
-          EOF
-
-      - name: Enable sddm and configure auto-login
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          systemctl enable sddm
-          cat > /etc/sddm.conf.d/autologin.conf << 'EOL'
-          [Autologin]
-          User=user
-          Session=plasma
-          EOL
-          EOF
+      # Desktop flavors (Plasma Desktop / Plasma Mobile) are layered by
+      # the apply-davinci-overlay workflow on top of this minimal base
+      # image: pick an overlay there (packages + overlay dir + sddm
+      # session), no rebuild of the base needed.
 
       - name: Show boot config
         run: |
@@ -382,8 +375,6 @@ jobs:
           mkinitcpio -P
           test -f /boot/EFI/Linux/arch-linux-davinci.efi
           test -f /boot/EFI/Linux/arch-linux-davinci-debug.efi
-          test -f /boot/EFI/Linux/arch-linux-davinci-debug-nokaslr.efi
-          test -f /boot/EFI/Linux/arch-linux-davinci-debug-novamap.efi
           ls /boot/EFI/Linux/
           test -f /boot/EFI/BOOT/bootaa64.efi
           ls -l /boot/EFI/ /boot/EFI/Linux/ /boot/loader/entries/ || true
@@ -444,10 +435,10 @@ jobs:
           sha256sum ./images/* > ./images/SHA256SUMS
           cat ./images/SHA256SUMS
 
-      - name: Upload davinci artifact
+      - name: Upload davinci base artifact
         uses: actions/upload-artifact@v7
         with:
-          name: arch-davinci-samsung
+          name: arch-davinci-base
           path: |
             images
             flash-davinci-samsung.sh

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Plasma Mobile overlay post-apply (runs inside arch-chroot, after the
+# base overlay-post-apply). Enables sddm with autologin into the mobile
+# session; KWin then configures the 1080x2340 panel natively (nabu
+# geometry files removed below).
+set -euo pipefail
+rm -f /etc/skel/.config/kwinoutputconfig.json /var/lib/sddm/.config/kwinoutputconfig.json
+chown -R sddm:sddm /var/lib/sddm/.config/ 2>/dev/null || true
+systemctl enable sddm 2>/dev/null || echo "WARNING: sddm enable failed (masked? intentional during bootloop diagnosis — unmask when the greeter is fixed)" >&2
+# Modem + sensors daemons for the full stack. Guarded: a missing unit
+# (packaging surprise) must not fail the whole image build.
+systemctl enable ModemManager.service 2>/dev/null || echo "WARNING: ModemManager.service unit missing" >&2
+systemctl enable iio-sensor-proxy.service 2>/dev/null || echo "WARNING: iio-sensor-proxy.service unit missing" >&2
+# PipeWire user stack for the autologin session. Arch preset-enables most
+# of these; --global is idempotent, so pin them explicitly.
+systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service 2>/dev/null || echo "WARNING: pipewire user units missing" >&2
+mkdir -p /etc/sddm.conf.d
+cat > /etc/sddm.conf.d/autologin.conf << 'EOL'
+[Autologin]
+User=user
+Session=plasma-mobile
+EOL
+echo "plasma-mobile overlay applied (sddm autologin as user)"

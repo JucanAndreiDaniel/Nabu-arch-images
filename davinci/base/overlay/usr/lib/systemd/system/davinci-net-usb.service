@@ -1,0 +1,11 @@
+[Unit]
+Description=Davinci USB network gadget (NCM for SSH)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/davinci/net-usb
+
+[Install]
+WantedBy=multi-user.target

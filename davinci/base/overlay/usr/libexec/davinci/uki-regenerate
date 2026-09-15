@@ -3,8 +3,29 @@ set -euo pipefail
 
 # Regenerate the davinci UKI (systemd-boot Type 2) after linux-davinci
 # installs/upgrades. Usable directly for custom/local kernel builds.
+#
+#   uki-regenerate [KVER]   rebuild the 2 presets for KVER
+#                          (default: newest /usr/lib/modules entry)
+#
+# Fast path: when only the DTB and/or cmdline changed (the common DT
+# iteration case), rebuilding the initramfs with mkinitcpio is pure waste
+# — the initrd would be byte-identical. If INITRD_FROM points at a dir
+# with pre-extracted `initrd-default`, `initrd-debug` and `osrel` (taken
+# host-side from the current UKIs, e.g. by update-image-local.sh) AND the
+# initramfs fingerprint below still matches, ukify reassembles both UKIs
+# around the existing initrd in ~a minute instead of ~ten. Validity was
+# proven by byte-comparing a reassembled UKI against mkinitcpio output
+# (all sections identical except the cmdline). Anything uncertain falls
+# back to the full mkinitcpio -P (safe direction, never a stale boot).
+#
+# The kernel carries no USB serial (G_SERIAL=n, no console=ttyGS0): the
+# getty generator stays quiet and nothing binds the UDC.
+#
+# Retired: debug-nokaslr / debug-novamap presets (early-hang hypotheses,
+# ruled out once the phone booted to login) and the gserial preset
+# (serial fully retired, see SERIAL-BRIEF §18).
 
-kernver="${1:-$(ls /usr/lib/modules/ 2>/dev/null | sort -V | tail -1)}"
+kernver="${1:-$(ls /usr/lib/modules/ 2>/dev/null | grep -v '\-gserial$' | sort -V | tail -1)}"
 if [ -z "$kernver" ]; then
     echo "No kernel version found" >&2
     exit 1
@@ -23,23 +44,28 @@ cat > /etc/mkinitcpio.d/linux-davinci.preset << PRESET
 ALL_config="/etc/mkinitcpio.conf"
 ALL_kver="/boot/vmlinuz-${kernver}"
 
-PRESETS=('default' 'debug' 'debug_nokaslr' 'debug_novamap')
+PRESETS=('default' 'debug')
 
 default_uki="/boot/EFI/Linux/arch-linux-davinci.efi"
 default_cmdline="/etc/cmdline.d/combined-default.conf"
 debug_uki="/boot/EFI/Linux/arch-linux-davinci-debug.efi"
 debug_cmdline="/etc/cmdline.d/combined-debug.conf"
-debug_nokaslr_uki="/boot/EFI/Linux/arch-linux-davinci-debug-nokaslr.efi"
-debug_nokaslr_cmdline="/etc/cmdline.d/combined-debug-nokaslr.conf"
-debug_novamap_uki="/boot/EFI/Linux/arch-linux-davinci-debug-novamap.efi"
-debug_novamap_cmdline="/etc/cmdline.d/combined-debug-novamap.conf"
 PRESET
 
 if [ -f /usr/lib/kernel/uki.conf ]; then
     sed -i "s|^DeviceTree=.*|DeviceTree=/boot/dtb-${kernver}|" /usr/lib/kernel/uki.conf
 fi
 
+# Retired serial experiments (see overlay-post-apply for the shared list):
+# delete their leftovers from existing images (fresh images never get them).
+rm -f /boot/EFI/Linux/arch-linux-davinci-gserial.efi \
+      /boot/loader/entries/arch-davinci-gserial.conf \
+      /etc/cmdline.d/combined-gserial.conf \
+      /etc/cmdline.d/gserial.conf
+
 # mkinitcpio bakes one cmdline file per preset (see combine-cmdline).
+# Regenerate first: the fast path below needs current combined files,
+# and the slow path consumes them too.
 /usr/libexec/davinci/combine-cmdline
 
 # /boot lives on the rootfs for davinci v1 (no separate ESP partition).
@@ -51,7 +77,61 @@ if [ -f /boot/EFI/Linux/arch-linux-davinci.efi ]; then
     cp -f /boot/EFI/Linux/arch-linux-davinci.efi /boot/EFI/Linux/arch-linux-davinci-old.efi
     echo "Preserved previous UKI as arch-linux-davinci-old.efi"
 fi
-mkinitcpio -P
+
+STAMP="/boot/EFI/Linux/.davinci-initrd-fp"
+initrd_fingerprint() {
+    # Single implementation lives in initrd-fingerprint (shared with
+    # build-image-local.sh); this wrapper keeps the call sites readable.
+    # Everything that can change initramfs BYTES. Deliberately excludes
+    # the DTB and the baked cmdlines: those reassemble cheaply. vmlinuz
+    # stands in for the whole kernel build (same source+config+gzip ⇒
+    # same modules; a DT-only change leaves Image.gz bit-identical).
+    # Any unreadable input aborts (return 1) → slow path.
+    /usr/libexec/davinci/initrd-fingerprint "$kernver"
+}
+
+FAST_OK=0
+if [ -n "${INITRD_FROM:-}" ] && [ -f "$STAMP" ] \
+    && [ -f "$INITRD_FROM/initrd-default" ] \
+    && [ -f "$INITRD_FROM/initrd-debug" ] \
+    && [ -f "$INITRD_FROM/osrel" ] \
+    && [ -f /boot/vmlinuz-"${kernver}" ] \
+    && [ -f /etc/cmdline.d/combined-default.conf ] \
+    && [ -f /etc/cmdline.d/combined-debug.conf ] \
+    && [ -f /boot/dtb-"${kernver}" ] \
+    && command -v ukify >/dev/null 2>&1; then
+    FP="$(initrd_fingerprint || true)"
+    if [ -n "$FP" ] && [ "$(cat "$STAMP")" = "$FP" ]; then
+        FAST_OK=1
+        echo "initramfs unchanged (fingerprint match), reassembling UKIs with ukify ..."
+    else
+        echo "initramfs inputs changed, full mkinitcpio rebuild ..."
+    fi
+else
+    echo "no reusable initrd (first build or no extraction), full mkinitcpio rebuild ..."
+fi
+
+if [ "$FAST_OK" -eq 1 ]; then
+    ukify build --uname="$kernver" --config=/usr/lib/kernel/uki.conf \
+        --linux="/boot/vmlinuz-${kernver}" \
+        --initrd="$INITRD_FROM/initrd-default" \
+        --cmdline=@/etc/cmdline.d/combined-default.conf \
+        --os-release="@$INITRD_FROM/osrel" \
+        --output=/boot/EFI/Linux/arch-linux-davinci.efi
+    ukify build --uname="$kernver" --config=/usr/lib/kernel/uki.conf \
+        --linux="/boot/vmlinuz-${kernver}" \
+        --initrd="$INITRD_FROM/initrd-debug" \
+        --cmdline=@/etc/cmdline.d/combined-debug.conf \
+        --os-release="@$INITRD_FROM/osrel" \
+        --output=/boot/EFI/Linux/arch-linux-davinci-debug.efi
+else
+    mkinitcpio -P
+    if FP="$(initrd_fingerprint || true)"; then
+        echo "$FP" > "$STAMP"
+    else
+        rm -f "$STAMP"
+    fi
+fi
 
 echo "UKI regeneration complete for kernel ${kernver}"
 ls -l /boot/EFI/Linux/

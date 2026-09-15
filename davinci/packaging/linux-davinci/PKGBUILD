@@ -28,21 +28,33 @@ source=("linux-sm7150-${_tag}.tar.gz::https://github.com/sm7150-mainline/linux/a
         "usb-gadget.config")
 sha256sums=('SKIP'  # pin after first verified build
             'SKIP'  # local file: working pmOS /boot/config
-            'SKIP')  # local file: single deliberate delta (G_SERIAL=m)
+            'SKIP')  # local file: single deliberate delta (G_SERIAL=n)
 makedepends=('bc' 'cpio' 'gettext' 'libelf' 'pahole' 'perl' 'python' 'tar' 'xz' 'gcc' 'make' 'rsync')
 options=('!strip')
 
 prepare() {
   cd "${_sdir}"
   # Working pmOS config verbatim, plus the single documented delta in
-  # usb-gadget.config (scripts/config validates the symbol exists).
+  # usb-gadget.config (no USB serial at all: G_SERIAL off, composite
+  # function stack stays builtin for the NCM network gadget).
   cp "$startdir/config-pmos-7.1_rc3" .config
-  ./scripts/config --module CONFIG_USB_G_SERIAL
+  while read -r line; do
+    case "$line" in
+      ""|\#*) continue ;;
+    esac
+    sym="${line%%=*}"; val="${line#*=}"
+    case "$val" in
+      y) ./scripts/config --enable "$sym" ;;
+      m) ./scripts/config --module "$sym" ;;
+      n) ./scripts/config --disable "$sym" ;;
+      *) echo "ERROR: bad fragment line: $line" >&2; exit 1 ;;
+    esac
+  done < "$startdir/usb-gadget.config"
   make olddefconfig
   # Verify the davinci-relevant effective config. Ground truth is the
   # WORKING pmOS 7.1.0-sm7150 /boot/config (linux-postmarketos-qcom-sm7150
-  # 7.1_rc3) plus the single documented delta (G_SERIAL=m for the
-  # configfs composite gadget).
+  # 7.1_rc3) plus the single documented delta (G_SERIAL=n, USB serial
+  # fully retired; composite stack builtin for NCM).
   # Fail the build on mismatch instead of shipping a blind image; the full
   # table also lands in the CI log for post-mortems.
   echo "--- davinci effective-config check ---"
@@ -70,22 +82,27 @@ prepare() {
       USB_CONFIGFS_F_FS USB_CONFIGFS_F_HID \
       CONFIGFS_FS USB_ROLE_SWITCH \
       PSTORE PSTORE_CONSOLE PSTORE_RAM MAGIC_SYSRQ \
-      SCSI_UFS_QCOM SM_GCC_7150 SM_DISPCC_7150; do
+      SCSI_UFS_QCOM SM_GCC_7150 SM_DISPCC_7150 \
+      USB_CONFIGFS USB_LIBCOMPOSITE \
+      USB_F_ACM USB_F_SERIAL USB_F_OBEX USB_U_SERIAL USB_U_ETHER \
+      USB_F_ECM USB_F_NCM USB_F_EEM USB_F_RNDIS USB_F_MASS_STORAGE \
+      USB_F_FS USB_F_HID; do
     _need_y "CONFIG_${s}"
   done
   # U_SERIAL_CONSOLE is bool: allowed =y with U_SERIAL=m (asserted loud).
   for s in U_SERIAL_CONSOLE USB_CONFIGFS_SERIAL USB_CONFIGFS_ACM; do
     _need_y "CONFIG_${s}"
   done
-  for s in BACKLIGHT_PWM USB_CONFIGFS USB_G_SERIAL USB_LIBCOMPOSITE \
-      USB_F_ACM USB_F_SERIAL USB_F_OBEX USB_U_SERIAL USB_U_ETHER \
-      USB_F_ECM USB_F_RNDIS; do
+  for s in BACKLIGHT_PWM; do
     _need_m "CONFIG_${s}"
   done
   for s in FB_SIMPLE FB_EFI SYSFB_SIMPLEFB DRM_SIMPLEDRM LOGO \
       TOUCHSCREEN_GOODIX; do
     _need_off "CONFIG_${s}"
   done
+  # No USB serial at all (legacy driver stays away from the UDC and
+  # nothing assembles the builtin composite stack except NCM networking).
+  _need_off "CONFIG_USB_G_SERIAL"
 }
 
 build() {

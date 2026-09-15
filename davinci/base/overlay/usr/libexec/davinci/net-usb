@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# davinci-net-usb: assemble the USB *network* gadget (NCM, RNDIS fallback)
+# for SSH access. Serial stays dead (retired): this gadget carries no ACM
+# function, no tty, nothing that can stall boot or fight SDDM.
+#
+# Layout mirrors pmOS setup_usb_network_configfs: gadget g1, VID 18D1 /
+# PID D001, ncm.usb0 (fallback rndis.usb0), bound to the first UDC.
+# NetworkManager owns the address + DHCP server (shared profile usb-shared:
+# phone 172.16.42.1, host gets an address automatically).
+#
+# Idempotent and infallible (best-effort throughout, always exits 0):
+# runs at boot via davinci-net-usb.service and on UDC hotplug via
+# 90-davinci-usb.rules.
+set +e
+
+G="/sys/kernel/config/usb_gadget/davinci-net"
+[ -d /sys/kernel/config ] || exit 0
+mount -t configfs none /sys/kernel/config 2>/dev/null || true
+# All builtin (=y); modprobe is a no-op safety net.
+for m in libcomposite u_ether usb_f_ncm usb_f_rndis configfs; do
+  modprobe "$m" 2>/dev/null || true
+done
+
+UDC="$(ls /sys/class/udc 2>/dev/null | head -n 1)"
+[ -n "$UDC" ] || exit 0
+cur="$(cat "$G/UDC" 2>/dev/null)"
+[ "$cur" = "$UDC" ] && exit 0
+[ -n "$cur" ] && echo "" > "$G/UDC" 2>/dev/null
+
+mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" \
+         "$G/functions/ncm.usb0" "$G/functions/rndis.usb0" 2>/dev/null
+echo 0x18d1 > "$G/idVendor" 2>/dev/null
+echo 0xd001 > "$G/idProduct" 2>/dev/null
+echo "davinci" > "$G/strings/0x409/manufacturer" 2>/dev/null
+echo "arch-linux-net" > "$G/strings/0x409/product" 2>/dev/null
+echo "USB network" > "$G/configs/c.1/strings/0x409/configuration" 2>/dev/null
+echo "02:00:86:10:20:01" > "$G/functions/ncm.usb0/dev_addr" 2>/dev/null || true
+echo "02:00:86:10:20:02" > "$G/functions/ncm.usb0/host_addr" 2>/dev/null || true
+
+# Primary NCM (pmOS default); keep a previous RNDIS fallback in place,
+# else prefer NCM.
+if [ -L "$G/configs/c.1/rndis.usb0" ] && [ ! -L "$G/configs/c.1/ncm.usb0" ]; then
+  :
+elif ! ln -sf "$G/functions/ncm.usb0" "$G/configs/c.1/" 2>/dev/null \
+  && ! ln -sf "$G/functions/rndis.usb0" "$G/configs/c.1/" 2>/dev/null; then
+  exit 0
+fi
+
+echo "$UDC" > "$G/UDC" 2>/dev/null || true
+logger -t davinci-net-usb "USB network gadget bound on $UDC" 2>/dev/null || true
+exit 0

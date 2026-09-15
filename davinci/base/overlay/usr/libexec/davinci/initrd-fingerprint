@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Print the initramfs fingerprint for KVER (default: newest modules entry).
+# Single implementation shared by uki-regenerate (fast-path decision +
+# stamp) and build-image-local.sh (stamp on uki-cache hits so the first
+# update-image run off a fresh image can also take the fast path).
+# Exits nonzero when any input is unreadable (callers treat that as
+# "changed" and take the slow path — safe direction).
+set -euo pipefail
+
+kernver="${1:-$(ls /usr/lib/modules/ 2>/dev/null | grep -v '\-gserial$' | sort -V | tail -1)}"
+[ -n "$kernver" ] || exit 1
+
+{
+    echo "kver:$kernver"
+    sha256sum "/boot/vmlinuz-${kernver}" || exit 1
+    sha256sum /etc/mkinitcpio.conf || exit 1
+    [ -d /etc/initcpio/hooks ] && [ -d /etc/initcpio/install ] || exit 1
+    find /etc/initcpio/hooks /etc/initcpio/install -type f | sort | xargs sha256sum || exit 1
+    # FILES=() firmware blobs baked into the initramfs (early GPU FW).
+    # shellcheck disable=SC1091
+    FILES=()
+    eval "$(grep -E '^FILES=\(' /etc/mkinitcpio.conf)" || exit 1
+    for f in "${FILES[@]}"; do sha256sum "$f" || exit 1; done
+    sha256sum /etc/os-release /usr/lib/os-release 2>/dev/null || true
+    pacman -Q mkinitcpio systemd 2>/dev/null || true
+} | sha256sum | cut -d' ' -f1

@@ -111,21 +111,13 @@ fails, multi-user login still works.
 
 ## SSH over USB
 
-Every boot binds an ACM+ECM composite gadget (serial console/logs stay on
-ttyGS0; the serial getty keeps working). The phone is `192.168.42.1/24`
-on `usb0` (static NetworkManager profile); give the host side an address
-once per plug-in and ssh in (user `123456`; host keys generate on first
-sshd start):
-
-```bash
-ip link  # new CDC Ethernet device, host MAC 02:00:86:10:20:02
-sudo ip addr add 192.168.42.2/24 dev <iface> && sudo ip link set <iface> up
-ssh user@192.168.42.1
-```
-
-Notes: needs the G_SERIAL=m kernel (nothing auto-owns the UDC, the
-composite binds instead); unplugged boots skip gadget setup after short
-polls and continue normally; replugging re-triggers binding via udev.
+Every boot assembles an NCM network gadget (`davinci-net-usb`, pmOS
+layout — VID `18D1`/`D001`, RNDIS fallback) plus a NetworkManager
+`shared` profile. The phone is `172.16.42.1`; plug USB and `ssh
+user@172.16.42.1` — the host gets its address over DHCP automatically,
+no manual IP needed. No serial involved: no tty, no `ttyGS0`, nothing
+that can stall boot (USB serial was retired after both architectures
+failed; G_SERIAL is off and no cmdline carries `console=ttyGS0`).
 
 ## Iterating without reflashing (UMS)
 
@@ -148,60 +140,51 @@ Exit UMS mode (any key on the phone) and reboot to test. Full reflash is
 only needed for kernel-package or base-rootfs changes. Keep one known-good
 `userdata-nested.img` around as the recovery fallback.
 
-## Boot status (2026-09-13: boots to login)
+## Boot status (boots to Plasma)
 
-The image boots to `Login Prompts`: `Getty on tty1` (MSM/panel display),
-`Serial Getty on ttyGS0` (USB serial, log in as `user`/`123456`), root on
-`PARTLABEL=ARCH`, `/boot` mounted, modem DSP firmware loading. Bring-up
-history is kept below for reference.
+The image boots to SDDM autologin (`user`) on the 1080x2340 panel, with
+`getty@tty1` as fallback. Access: panel, USB-NCM/WiFi SSH
+(`user`/`123456`), or UMS-mount forensics pulls. Root is on
+`PARTLABEL=ARCH`, `/boot` mounted, modem DSP firmware loading.
 
-Observed so far: the UKI's EFI stub runs to `Exiting boot services...`
-(initrd + DTB load fine), then zero kernel output — not even DT-bootargs
-`earlycon` — and the PMIC watchdog resets the board after a few seconds.
-That places the hang between `ExitBootServices` and `console_init`, before
-any driver (including display) is up: KASLR placement and the arm64 EFI
-runtime mapping are the prime suspects, not root mount or the panel driver.
-
-Four boot entries are installed (one variable per experiment):
+Two boot entries are installed (plus a `previous UKI` fallback):
 
 - `Arch Linux (davinci, Samsung)` — `arch-linux-davinci.efi`
-  (verbose bring-up cmdline: `root=PARTLABEL=ARCH + console=ttyMSM0 + console=tty0`,
+  (verbose bring-up cmdline: `root=PARTLABEL=ARCH + console=tty0`,
   no `quiet` until first successful boot)
 - `Arch Linux (davinci, Samsung, debug)` — `arch-linux-davinci-debug.efi`
   (adds `loglevel=7 ignore_loglevel earlycon keep_bootcon efi=debug
   drm.debug=0x1e initcall_debug davinci_debug`)
-- `... debug nokaslr` — debug combo + `nokaslr` (rules out KASLR
-  placement crashes before `console_init`)
-- `... debug novamap` — debug combo + `efi=novamap` (rules out a fault in
-  the arm64 EFI runtime mapping, also before `console_init`)
+
+(Retired: `debug-nokaslr` / `debug-novamap` combos and the USB-serial
+experiments — early-hang hypotheses ruled out, both serial
+architectures failed. The `nokaslr`/`novamap` UKIs, loader confs and
+cmdline fragments are gone; `overlay-post-apply` deletes their leftovers
+from existing images.)
 
 `davinci_debug` makes the `davinci_nested` initramfs hook trace hosting
 partition lookup + partitioned-loop setup (`ls`, `blkid`) to serial/fbcon/pstore.
 
 Observability ladder (cheapest first):
 
-1. **USB gadget alive-signal**: every boot raises a CDC-ACM gadget from the
-   initramfs (`davinci_gadget` hook) and `console=ttyGS0` streams kernel
-   logs to it. On the host, watch `dmesg -w` / `ls /dev/ttyACM*` after
-   picking an entry. ACM device appears = kernel + initramfs alive (black
-   screen is then dead display/serial or rootwait, not a hang); attach with
-   `tio /dev/ttyACM0` (or `picocom`) to read the log backlog + follow.
-   Nothing enumerates = hang before initramfs (or before UDC probe).
+1. **USB network**: after boot, an NCM gadget enumerates on the host
+   (`dmesg -w`, new CDC Ethernet device) and `ssh user@172.16.42.1`
+   works — that alone proves kernel + initramfs + root + userspace are
+   up. Nothing enumerates = hang before USB init or no UDC.
 2. **Screen**: the debug entry prints `ignore_loglevel` + `drm.debug` to
    fbcon (`console=tty0`). Text on screen = kernel alive, display handoff
    works; black = panic before fbcon or MSM tearing down simplefb.
-2. **U-Boot menu**: hold Volume Down while U-Boot loads, or pick `Enable
-   serial console gadget` (`serial_gadget` in `qcom-phone.env`) for a
-   `usbacm` serial console on the host.
-3. **USB enumeration**: after picking an entry, `lsusb` on the host. A new
-   gadget/serial device = kernel past USB init; nothing at all = very early
-   hang (DTB/clock/power, not root mount).
+2. **U-Boot menu**: hold Volume Down while U-Boot loads for UMS/fastboot
+   access without a working system.
+3. **UMS forensics**: U-Boot `Enable USB mass storage` exposes the UFS;
+   mount the nested root and read `/var/log/davinci-forensics.log` or
+   `journalctl --directory=<mnt>/var/log/journal -b 0 -e`.
 4. **ramoops**: DTS reserves `ramoops@9d800000` and the kernel has
    `PSTORE_CONSOLE+PSTORE_RAM`; after a *warm* reboot into a working system
    (e.g. pmOS, without cutting power) read `/sys/fs/pstore/console-ramoops-0`
    for the previous boot's last dmesg.
-5. **UART**: `console=ttyMSM0,115200n8` is baked in (also in DT
-   `chosen.bootargs`); needs test-point access, last resort.
+5. **UART**: needs test-point access, last resort (no `console=ttyMSM0`
+   on any cmdline).
 
 pmOS cross-check (known-good reference): pmOS boots the same U-Boot with a
 Type 1 entry of **split files, no UKI** — `linux vmlinuz` (zstd zboot
@@ -211,8 +194,9 @@ partition, and its 7.1.0-sm7150 `/boot/config`
 (`linux-postmarketos-qcom-sm7150` 7.1_rc3) drives display natively via
 MSM/KMS: `FB_SIMPLE`/`FB_EFI`/`LOGO` unset, `SYSFB_SIMPLEFB`/`SIMPLEDRM`
 unset, panel (`AMS639RQ08`), touch (`GTX8`), backlight (`QCOM_WLED`)
-**builtin**, gadget stack builtin with `CONFIGFS` core `=m`. This tree now
-matches that model exactly. The kernel `prepare()` asserts the effective
+**builtin**, composite gadget function stack builtin (`CONFIGFS` core
+`=m`) with `G_SERIAL` off — nothing binds the UDC except the NCM
+network gadget at runtime. This tree now matches that model exactly. The kernel `prepare()` asserts the effective
 `.config` for all of these and fails the build on mismatch (see CI log
 `davinci effective-config check`).
 
@@ -254,5 +238,7 @@ The build script refuses to mix panel variants.
   pacman hook, `uki-regenerate`, systemd-boot loader config)
 - `packaging/linux-davinci/PKGBUILD` — fork-kernel package scaffolding
 - `packaging/linux-firmware-xiaomi-davinci/PKGBUILD` — firmware scaffolding
+- `packaging/hexagonrpcd/PKGBUILD` — glibc FastRPC/SSC daemon (sensors); no
+  Arch package exists, built by the `build-davinci-pkgs` job like the kernel
 - `flash-davinci-samsung.sh/.bat` — fastboot flash scripts
 - `deviceinfo` — pmOS-derived fields for documentation

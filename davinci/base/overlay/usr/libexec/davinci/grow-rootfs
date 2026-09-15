@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# davinci-grow-rootfs: grow the nested ARCH root partition to fill the
+# hosting partition, then online-resize ext4. Runs as a oneshot service
+# on every boot until it stamps /var/lib/davinci-grow-rootfs.done.
+#
+# Why this exists: the flashed image is a fixed-size artifact (8G default,
+# --image-size to change) containing a nested GPT (4096-byte sectors, p1
+# ESP + p2 ARCH) written at offset 0 of the `linux`/`userdata` hosting
+# partition. The davinci_nested initramfs hook loop-mounts that hosting
+# partition with `-P --sector-size 4096`, so root is e.g. /dev/loop0p2
+# while the physical partition is tens of GB larger. Plain
+# x-systemd.growfs cannot span the nested loop, so growpart (partition)
+# + resize2fs (online fs) do it here instead. ESP is never touched.
+#
+# Safety: read-only checks first, growpart only grows p2 (never shrinks),
+# every failure path logs loudly and exits 0 so boot can never fail
+# because of this. The stamp is written on success AND on definitive
+# no-ops (non-nested root, non-ext4, no trailing space); missing tools
+# or failed grow/resize leave no stamp so a later boot retries.
+set -u
+STAMP="/var/lib/davinci-grow-rootfs.done"
+log() { echo "[davinci-grow-rootfs] $*" ; }
+
+if [ -f "$STAMP" ]; then
+  exit 0
+fi
+stamp_and_exit() {
+  # Best effort: a read-only /var/lib must not fail the boot either.
+  touch "$STAMP" 2>/dev/null || log "WARNING: cannot write $STAMP"
+  exit 0
+}
+
+ROOT_SRC="$(findmnt -no SOURCE / 2>/dev/null || true)"
+[ -n "$ROOT_SRC" ] || { log "cannot determine root source, retrying next boot"; exit 0; }
+# fstab mounts PARTLABEL=ARCH, which may surface as a /dev/disk symlink.
+ROOT_SRC="$(realpath "$ROOT_SRC" 2>/dev/null || echo "$ROOT_SRC")"
+case "$ROOT_SRC" in
+  /dev/loop*p2) ;;
+  *) log "root ($ROOT_SRC) is not a nested loop partition, nothing to do"; stamp_and_exit ;;
+esac
+[ "$(findmnt -no FSTYPE / 2>/dev/null)" = "ext4" ] || { log "root fstype is not ext4, nothing to do"; stamp_and_exit; }
+command -v growpart >/dev/null 2>&1 || { log "WARNING: growpart missing (install cloud-guest-utils), retrying next boot"; exit 0; }
+command -v resize2fs >/dev/null 2>&1 || { log "WARNING: resize2fs missing (install e2fsprogs), retrying next boot"; exit 0; }
+
+LOOP="${ROOT_SRC%p2}"
+HOST="$(losetup -n -O BACK-FILE "$LOOP" 2>/dev/null | tr -d '[:space:]')"
+[ -n "$HOST" ] || { log "WARNING: no backing device for $LOOP, retrying next boot"; exit 0; }
+LOOP_BYTES="$(blockdev --getsize64 "$LOOP" 2>/dev/null || echo 0)"
+HOST_BYTES="$(blockdev --getsize64 "$HOST" 2>/dev/null || echo 0)"
+log "root=$ROOT_SRC loop=$LOOP ($LOOP_BYTES bytes) host=$HOST ($HOST_BYTES bytes)"
+[ "$LOOP_BYTES" -gt 0 ] && [ "$HOST_BYTES" -gt 0 ] || { log "WARNING: unreadable sizes, retrying next boot"; exit 0; }
+# The loop usually spans the whole host partition (loop==host) with the
+# free space INSIDE the loop after p2 — but the nested GPT's backup
+# header is stuck at the old image end (e.g. 8G), hiding the rest from
+# partitioning tools (seen live: 51.6G loop, table ending at 8G).
+# Relocate the backup header first; harmless when already correct.
+if command -v sgdisk >/dev/null 2>&1; then
+  log "relocating backup GPT header on $LOOP ..."
+  sgdisk -e "$LOOP" >/dev/null 2>&1 || log "WARNING: sgdisk -e failed, growpart may see no space"
+else
+  log "WARNING: sgdisk missing (install gptfdisk), stale backup header would block growth"
+fi
+
+log "growing partition 2 on $LOOP ..."
+if ! growpart "$LOOP" 2; then
+  # growpart exits 1 with NOCHANGE when already maximal (e.g. a --image-size
+  # build that already fills its host): that is success, not failure.
+  if growpart "$LOOP" 2 2>&1 | grep -qi 'NOCHANGE\|no change'; then
+    log "partition already maximal, nothing to do"
+    stamp_and_exit
+  fi
+  log "WARNING: growpart failed, retrying next boot"
+  exit 0
+fi
+udevadm settle 2>/dev/null || true
+log "resizing ext4 on $ROOT_SRC ..."
+if ! resize2fs "$ROOT_SRC"; then
+  log "WARNING: resize2fs failed, retrying next boot"
+  exit 0
+fi
+log "OK: root grown to $(blockdev --getsize64 "$ROOT_SRC" 2>/dev/null || echo '?') bytes"
+stamp_and_exit

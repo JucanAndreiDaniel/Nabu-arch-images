@@ -1,0 +1,15 @@
+[connection]
+id=usb-shared
+uuid=02868610-2001-4201-8000-000000000001
+type=ethernet
+interface-name=usb0
+autoconnect=true
+
+[ethernet]
+
+[ipv4]
+method=shared
+address1=172.16.42.1/24
+
+[ipv6]
+method=ignore

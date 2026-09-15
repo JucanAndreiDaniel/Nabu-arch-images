@@ -3,7 +3,7 @@
 # Sets up the linux-davinci mkinitcpio preset + DTB pointer and holds the
 # fork kernel so generic linux-aarch64 cannot replace it.
 
-kernver=$(ls /usr/lib/modules/ | sort -V | tail -1)
+kernver=$(ls /usr/lib/modules/ | grep -v '\-gserial$' | sort -V | tail -1)
 if [ -n "$kernver" ]; then
   # mkinitcpio bakes ONE cmdline file per preset, not the whole
   # /etc/cmdline.d directory (see combine-cmdline).
@@ -13,23 +13,37 @@ if [ -n "$kernver" ]; then
 
 ALL_kver="$kernver"
 
-PRESETS=('default' 'debug' 'debug_nokaslr' 'debug_novamap')
+PRESETS=('default' 'debug')
 
 default_uki="/boot/EFI/Linux/arch-linux-davinci.efi"
 default_cmdline="/etc/cmdline.d/combined-default.conf"
 debug_uki="/boot/EFI/Linux/arch-linux-davinci-debug.efi"
 debug_cmdline="/etc/cmdline.d/combined-debug.conf"
-debug_nokaslr_uki="/boot/EFI/Linux/arch-linux-davinci-debug-nokaslr.efi"
-debug_nokaslr_cmdline="/etc/cmdline.d/combined-debug-nokaslr.conf"
-debug_novamap_uki="/boot/EFI/Linux/arch-linux-davinci-debug-novamap.efi"
-debug_novamap_cmdline="/etc/cmdline.d/combined-debug-novamap.conf"
 PRESET
 
-  sed -i "s|^DeviceTree=.*|DeviceTree=/boot/dtb-${kernver}|" /usr/lib/kernel/uki.conf
+  if [ -f /usr/lib/kernel/uki.conf ]; then
+    sed -i "s|^DeviceTree=.*|DeviceTree=/boot/dtb-${kernver}|" /usr/lib/kernel/uki.conf
+  fi
 else
   echo "ERROR: no kernel modules found in /usr/lib/modules - is linux-davinci installed?" >&2
   exit 1
 fi
+
+# Retired serial experiments: the nokaslr/novamap entries, the configfs
+# composite leftovers and the gserial debug kernel (G_SERIAL is off and no
+# cmdline carries console=ttyGS0 anymore). Delete their UKIs, loader
+# confs, baked cmdlines and fragments from existing images.
+rm -f /boot/EFI/Linux/arch-linux-davinci-gserial.efi \
+      /boot/loader/entries/arch-davinci-gserial.conf \
+      /etc/cmdline.d/combined-gserial.conf \
+      /etc/cmdline.d/gserial.conf
+# Stale debug kernels: a leftover *-gserial modules dir would otherwise win
+# `sort -V | tail -1` over the main kernel when UKIs regenerate (and waste
+# ~100MB). The running kernel here is the host's, so deleting image-side
+# debug kernels is always safe.
+for d in /usr/lib/modules/*-gserial; do
+  [ -d "$d" ] && rm -rf "$d"
+done
 
 # Force busybox initramfs init. Arch's default HOOKS use the `systemd`
 # hook, under which classic run_hook scripts NEVER execute: davinci_nested
@@ -41,6 +55,10 @@ fi
 sed -i 's/\bsystemd\b/udev/g; s/\bsd-vconsole\b/consolefont/g' /etc/mkinitcpio.conf
 # microcode updates are x86-only; drop the hook (aarch64 only warns).
 sed -i 's/ microcode//g' /etc/mkinitcpio.conf
+# autodetect probes the BUILD host (x86_64), not the phone: it shrinks the
+# initramfs to host drivers and can omit phone storage/USB. pmOS mkinitfs has
+# no equivalent (explicit module list). Drop it for the same explicit model.
+sed -i 's/ autodetect//g' /etc/mkinitcpio.conf
 hooks_line=$(grep '^HOOKS=' /etc/mkinitcpio.conf)
 case " $hooks_line " in
   *" systemd "*)
@@ -58,6 +76,13 @@ case " $hooks_line " in
     ;;
 esac
 echo "HOOKS: $hooks_line"
+case " $hooks_line " in
+  *" autodetect "*)
+    echo "ERROR: autodetect hook still present (probes x86 build host, not phone):" >&2
+    echo "$hooks_line" >&2
+    exit 1
+    ;;
+esac
 
 # Root lives on a nested partition inside userdata/linux, exposed by the
 # davinci_nested hook (partitioned loop). It must run before filesystems mounts
@@ -68,23 +93,13 @@ grep -q 'davinci_nested' /etc/mkinitcpio.conf || {
   exit 1
 }
 
-# davinci_gadget raises the ACM alive-signal gadget before nested-root
-# setup. Idempotent: after insertion the match string no longer occurs.
-sed -i 's/ block davinci_nested filesystems/ block davinci_gadget davinci_nested filesystems/' /etc/mkinitcpio.conf
-grep -q 'davinci_gadget' /etc/mkinitcpio.conf || {
-  echo "ERROR: failed to insert davinci_gadget into mkinitcpio HOOKS" >&2
-  exit 1
-}
-
 # Pin modules autodetect would miss (it probes the CI build host, not the
 # phone). resolve list is the pmOS set (gtx8, panel, wled — expected empty,
-# builtin on 7.1.0) plus the USB gadget stack for the ACM+ECM composite
-# (libcomposite/u_serial/usb_f_acm/u_ether/usb_f_ecm, all =m by design).
+# builtin on 7.1.0).
 # Kernel filenames use dashes (panel-samsung-ams639rq08.ko) while depmod
 # aliases use underscores, so match both spellings. Display/touch are not
 # needed to mount root, so warn instead of failing when a candidate is
-# missing; the gadget setup logs loudly at boot either way.
-want_mods=(gtx8 panel_samsung_ams639rq08 qcom_wled libcomposite u_serial usb_f_acm u_ether usb_f_ecm)
+# missing; early console/gadget setup logs loudly at boot either way.
 want_mods=(gtx8 panel_samsung_ams639rq08 qcom_wled)
 found_mods=()
 for m in "${want_mods[@]}"; do
@@ -106,9 +121,53 @@ else
   echo "WARNING: no davinci modules found in /usr/lib/modules/${kernver}; leaving MODULES empty" >&2
 fi
 
+# Early GPU firmware (pmOS 30-initramfs-*.files parity). The Adreno DRM stack
+# needs these before real root is mounted for early fbcon/splash: without
+# them the panel stays black until the rootfs firmware appears. Rootfs copies
+# already exist (firmware tarball + linux-firmware-qcom); this only pulls the
+# three files into the initramfs via mkinitcpio FILES=. Warn (don't fail) when
+# a candidate is missing so a partial firmware tree still builds.
+want_fw=(/usr/lib/firmware/qcom/a630_gmu.bin /usr/lib/firmware/qcom/a630_sqe.fw /usr/lib/firmware/qcom/sm7150/xiaomi/davinci/a615_zap.mbn)
+found_fw=()
+for f in "${want_fw[@]}"; do
+  if [ -f "$f" ]; then
+    found_fw+=("$f")
+  else
+    echo "WARNING: early firmware $f missing; skipping (panel may stay dark until real root)" >&2
+  fi
+done
+if [ "${#found_fw[@]}" -gt 0 ]; then
+  # Idempotent: the empty-tuple pattern only matches once.
+  sed -i "s|^FILES=()$|FILES=(${found_fw[*]})|" /etc/mkinitcpio.conf
+  if grep -q "^FILES=" /etc/mkinitcpio.conf; then
+    echo "FILES: $(grep '^FILES=' /etc/mkinitcpio.conf)"
+  else
+    echo "ERROR: failed to set mkinitcpio FILES" >&2
+    exit 1
+  fi
+else
+  echo "WARNING: no early GPU firmware found; leaving FILES empty" >&2
+fi
+
 # NetworkManager connection profiles must be root-only (0600) or NM
 # ignores them; git cannot store that mode, so fix it here.
 chmod 600 /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null || true
+
+# USB serial getty: no console=ttyGS0 exists on any cmdline and G_SERIAL
+# is off, so the generator never spawns serial-getty@ttyGS0. Delete any
+# stale static link and leave the instance unmasked (harmless either way).
+rm -f /etc/systemd/system/getty.target.wants/serial-getty@ttyGS0.service
+systemctl unmask serial-getty@ttyGS0.service 2>/dev/null || true
+
+# VT login stays on tty1 (Arch default): SDDM needs exclusive control of
+# its VT, and getty@tty0 follows the ACTIVE VT straight into the
+# compositor. Seen live: "Failed to take control of /dev/tty1",
+# HELPER_TTY_ERROR, greeter crash loop, sddm start-limit-hit, no UI.
+# Keep tty0 masked so nothing contends with the greeter; kernel messages
+# still reach the panel via console=tty0. (getty@tty1 comes from the
+# systemd package default; SDDM takes the next free VT as on stock Arch.)
+systemctl mask getty@tty0.service 2>/dev/null || true
+systemctl unmask getty@tty1.service 2>/dev/null || true
 
 sed -i '/^IgnorePkg/d' /etc/pacman.conf
 if grep -q '^#IgnorePkg' /etc/pacman.conf; then

@@ -1,0 +1,17 @@
+[Unit]
+Description=Grow nested davinci root partition to fill hosting partition
+Documentation=file:/usr/libexec/davinci/grow-rootfs
+After=local-fs.target
+Before=multi-user.target
+ConditionPathExists=!/var/lib/davinci-grow-rootfs.done
+ConditionPathIsReadWrite=/var/lib
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/davinci/grow-rootfs
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,43 @@
+#!/bin/sh
+# davinci-modem-gnss: start the modem LOC (GNSS) engine at boot so
+# location clients receive fixes (pmOS modem-gnss.service equivalent:
+# standalone operation mode + start; needs only qmicli).
+#
+# Best-effort and infallible: exits 0 on every path (no qmicli, no
+# modem, LOC errors) so boot can never fail because of this. Runs every
+# boot by design — the LOC engine does not survive a modem restart.
+# On flavors without libqmi (minimal/plasma) this is a deliberate
+# instant no-op until a modem stack exists.
+set -u
+log() { echo "[davinci-modem-gnss] $*"; }
+
+command -v qmicli >/dev/null 2>&1 || { log "qmicli missing (install libqmi), nothing to do"; exit 0; }
+
+# Modem discovery mirrors msm-modem-uim-selection (legacy rpmsg, wwan
+# QMI, then QRTR) with a short poll: uim-selection runs ahead of us and
+# already waited for the modem, so a long wait here would only stall.
+QMICLI_MODEM=
+count=0
+while [ -z "$QMICLI_MODEM" ] && [ "$count" -lt 15 ]; do
+	if [ -e /dev/modem ]; then
+		QMICLI_MODEM="qmicli --silent -d /dev/modem"
+		echo "Using /dev/modem"
+	elif [ -e /dev/wwan0qmi0 ]; then
+		QMICLI_MODEM="qmicli --silent -d /dev/wwan0qmi0 --device-open-qmi"
+		echo "Using /dev/wwan0qmi0"
+	elif qmicli --silent -pd qrtr://0 --uim-noop >/dev/null 2>&1; then
+		QMICLI_MODEM="qmicli --silent -pd qrtr://0"
+		echo "Using qrtr://0"
+	else
+		sleep 1
+		count=$((count+1))
+	fi
+done
+[ -n "$QMICLI_MODEM" ] || { log "no modem, nothing to do"; exit 0; }
+
+$QMICLI_MODEM --loc-set-operation-mode=standalone >/dev/null 2>&1 \
+	|| log "WARNING: --loc-set-operation-mode=standalone failed"
+$QMICLI_MODEM --loc-start >/dev/null 2>&1 \
+	|| log "WARNING: --loc-start failed"
+log "done"
+exit 0

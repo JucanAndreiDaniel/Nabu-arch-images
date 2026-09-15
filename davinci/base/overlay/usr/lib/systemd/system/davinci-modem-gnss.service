@@ -1,0 +1,15 @@
+[Unit]
+Description=Start modem GNSS engine for location fixes
+Documentation=file:/usr/libexec/davinci/modem-gnss
+After=msm-modem-uim-selection.service ModemManager.service
+Wants=msm-modem-uim-selection.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/davinci/modem-gnss
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -2,8 +2,10 @@
 # (CI parted `name`), so fstab uses PARTLABEL: no UUID placeholders, no
 # fill step, and partition uevents give udev native symlinks without blkid
 # probing (offset loops never got device units in the real root).
-# Root fsck runs in the initramfs `fsck` hook (pass 0 here); growfs is
-# manual until first successful boot (resize2fs via the ttyGS0 getty);
+# Root fsck runs in the initramfs `fsck` hook (pass 0 here); first-boot
+# grow is automatic (davinci-grow-rootfs.service: growpart p2 to fill the
+# hosting partition + online resize2fs, stamped in
+# /var/lib/davinci-grow-rootfs.done);
 # /boot is best-effort (nofail) so a missing ESP can never strand login.
 # <file system>   <mount point>  <type> <options>                          <dump> <pass>
 PARTLABEL=ARCH  /              ext4   rw,errors=remount-ro,x-systemd.device-timeout=30  0 0

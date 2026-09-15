@@ -1,0 +1,8 @@
+# Re-run the USB network gadget setup whenever a UDC appears (cable
+# plugged after boot, controller reprobe): the script itself is idempotent.
+ACTION=="add", SUBSYSTEM=="udc", TAG+="systemd", ENV{SYSTEMD_WANTS}+="davinci-net-usb.service"
+# NetworkManager unmanages g_ether-backed gadget interfaces by default
+# (85-nm-unmanaged.rules sorts earlier); clear the flag so the usb-shared
+# profile can autoconnect. Matched by the fixed device MAC programmed in
+# net-usb (02:00:86:10:20:01).
+ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="02:00:86:10:20:*", ENV{NM_UNMANAGED}="0"
