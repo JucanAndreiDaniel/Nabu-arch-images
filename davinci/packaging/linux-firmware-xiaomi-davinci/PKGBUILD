@@ -7,13 +7,14 @@
 # the redistribution terms. Manual step: clone the upstream repo at a pinned
 # commit, review, then build this package. Expected install paths:
 #   /lib/firmware/qcom/sm7150/xiaomi/davinci/{adsp,cdsp,modem,venus}.mbn
-#   /lib/firmware/qcom/sm7150/xiaomi/davinci/{a615_zap,ipa_fws}.mbn
+#   /lib/firmware/qcom/sm7150/xiaomi/davinci/a615_zap.mbn
+# NOTE: ipa_fws.mbn is intentionally excluded (see package() below).
 # plus ath10k calibration variant "xiaomi_davinci" (see
 # firmware-qcom-sm7150-ath10k + linux-firmware-qca/ath10k).
 
 pkgname=linux-firmware-xiaomi-davinci
 pkgver=5
-pkgrel=1
+pkgrel=2
 arch=('aarch64')
 license=('custom:proprietary')
 url="https://github.com/sm7150-mainline/firmware-xiaomi-davinci"
@@ -31,4 +32,6 @@ package() {
     echo "ERROR: expected usr/ in firmware tree" >&2
     exit 1
   fi
+  # Exclude IPA firmware: the modem/IPA stack must not ship ipa_fws.mbn.
+  rm -f "$pkgdir/usr/lib/firmware/qcom/sm7150/xiaomi/davinci/ipa_fws.mbn"
 }
